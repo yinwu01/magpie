@@ -10,6 +10,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"testing"
+	"time"
 )
 
 // The process listening on a port is found, with the program it runs: here
@@ -61,6 +62,38 @@ func evalPath(p string) string {
 		return q
 	}
 	return p
+}
+
+// lsof's "none found" is its exit 1 with nothing written. lsof killed at
+// the caller's deadline also ends with nothing written, and that is no
+// answer: read as none, it could let setPort move the gateway's port past
+// a magpie of this computer's on a busy Mac (#5180). sh and sleep stand in
+// for lsof, which only a Mac asks.
+func TestLsofCutShortIsNoAnswer(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sh and sleep stand in for lsof")
+	}
+	ask := func(ctx context.Context, name string, args ...string) ([]int, error) {
+		return lsofListeners(CommandContext(ctx, name, args...).Output())
+	}
+	bg := context.Background()
+	if ps, err := ask(bg, "sh", "-c", "exit 1"); err != nil || len(ps) != 0 {
+		t.Errorf("none found: %v %v", ps, err)
+	}
+	if ps, err := ask(bg, "sh", "-c", "echo 12; echo 34; echo 12"); err != nil || !slices.Equal(ps, []int{12, 34}) {
+		t.Errorf("two found: %v %v", ps, err)
+	}
+	if ps, err := ask(bg, "sh", "-c", "exit 2"); err == nil {
+		t.Errorf("lsof's error read as %v", ps)
+	}
+	if ps, err := ask(bg, "sh", "-c", "echo 12; exit 1"); err == nil {
+		t.Errorf("ids written beside a failure read as %v", ps)
+	}
+	short, cancel := context.WithTimeout(bg, 100*time.Millisecond)
+	defer cancel()
+	if ps, err := ask(short, "sleep", "30"); err == nil {
+		t.Errorf("lsof cut short at its deadline read as %v, with no error", ps)
+	}
 }
 
 // Only magpie's own programs are taken for magpie. An update moves a running
