@@ -18,6 +18,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/yetone/magpie/internal/testenv"
 )
 
 // The test binary is also the shim (MAGPIE_TUI_TEST=shim) and a fake
@@ -36,7 +38,17 @@ func TestMain(m *testing.M) {
 		fakeClaude(os.Args[1:])
 		os.Exit(0)
 	}
-	os.Exit(m.Run())
+	// the tests run in a home of their own, never the user's: Bun, which
+	// TestTapPutsTheGuardFilesSafeguards runs, writes its transpiler cache
+	// under the home's .bun or $XDG_CACHE_HOME/bun
+	os.Exit(testenv.Run(m))
+}
+
+// The package's tests run in testenv's home, never the user's (#5248).
+func TestRunsInAHomeOfItsOwn(t *testing.T) {
+	if home := os.Getenv(testenv.Marker); home == "" || os.Getenv("HOME") != home {
+		t.Fatal("TestMain left the tests in the user's own home")
+	}
 }
 
 // fakeTrust asks whether to trust the folder as Claude Code 2.1.314 does:
