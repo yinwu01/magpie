@@ -379,7 +379,12 @@ type Served struct {
 // and earlier word it to two people whose magpie said v0.1.630, so none of
 // the fixes since reached their requests. Its version tells it apart.
 func ServedBy() Served {
-	c := &http.Client{Timeout: 700 * time.Millisecond}
+	return ServedWithin(700 * time.Millisecond)
+}
+
+// ServedWithin is ServedBy waiting up to d for the answer.
+func ServedWithin(d time.Duration) Served {
+	c := &http.Client{Timeout: d}
 	res, err := c.Get(URL() + "/")
 	if err != nil {
 		return Served{}
