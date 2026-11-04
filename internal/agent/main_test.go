@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/yetone/magpie/internal/netproxy"
@@ -19,6 +21,8 @@ import (
 // internal/provider and internal/usage isolate themselves the same way.
 func TestMain(m *testing.M) {
 	if len(os.Args) == 3 && os.Args[1] == DryRunArg {
+		// the preview tests' child is kept off the network as well
+		testenv.Offline()
 		if err := DryRun(os.Args[2]); err != nil {
 			os.Stderr.WriteString(err.Error())
 			os.Exit(1)
@@ -73,5 +77,19 @@ func TestMain(m *testing.M) {
 	// there (a reverse proxy, #1985): known, and not magpie, as for a
 	// relay; the proxy-kept tests answer it
 	magpieAt = func(string) (bool, bool) { return false, true }
-	os.Exit(testenv.Run(m))
+	// and off the network (testenv.Offline): the package's tests asked
+	// x.ai, api.kimi.com and storage.googleapis.com (#5255)
+	os.Exit(testenv.RunIn(m, func(string) { testenv.Offline() }))
+}
+
+// A request through http.DefaultTransport is refused at once, never sent.
+func TestStaysOffTheNetwork(t *testing.T) {
+	resp, err := http.Get("https://api.kimi.com/")
+	if err == nil {
+		resp.Body.Close()
+		t.Fatalf("api.kimi.com answered %s: the package's tests reach the network", resp.Status)
+	}
+	if !strings.Contains(err.Error(), "tests stay off the network") {
+		t.Fatalf("api.kimi.com: %v, not testenv's refusal", err)
+	}
 }
