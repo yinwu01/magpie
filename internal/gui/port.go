@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/agent"
+	"github.com/yetone/magpie/internal/codexrelay"
 	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/proc"
 	"github.com/yetone/magpie/internal/settings"
@@ -33,29 +34,37 @@ var portFree = func(addr string) error {
 }
 
 // magpieOnPort says whether a magpie program of this user's listens on
-// port: the one serving the gateway is then this computer's, whose port is
-// set there. Not when the program listening is another one answering for
-// a magpie inside a container (OrbStack Helper, docker-proxy) or none this
-// user can see; when the processes can't be listed at all, it is taken to
-// be one.
-func magpieOnPort(port string) bool {
+// port, whatever answers there: then it is this computer's, whose port is
+// set there. Not when the program listening is another one, answering for
+// a magpie inside a container (OrbStack Helper, docker-proxy) or not
+// answering as magpie at all, or one this user can't see. The error is
+// the processes not listed, which says neither.
+func magpieOnPort(port string) (bool, error) {
 	n, _ := strconv.Atoi(port)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	pids, err := proc.ListeningOn(ctx, n)
+	pids, err := listeningOn(ctx, n)
 	if err != nil {
-		return true
+		return false, err
 	}
 	for _, pid := range pids {
 		if pid == os.Getpid() {
 			continue
 		}
 		if path, err := proc.Executable(pid); err == nil && proc.IsMagpie(path) {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
+
+// listeningOn is proc.ListeningOn; a test has it fail.
+var listeningOn = proc.ListeningOn
+
+// servedWait is how long setPort waits for what answers at the port when
+// the processes there can't be listed: a magpie too busy to answer in
+// ServedBy's 700ms still says it is one (#5180).
+const servedWait = 5 * time.Second
 
 // errPortTaken is a port another program listens on.
 func errPortTaken(p int) error {
@@ -95,8 +104,24 @@ func setPort(p int) (portJSON, error) {
 		return portJSON{Port: want}, nil
 	}
 	gw := served.Load()
-	if gw == nil && gateway.Running() && magpieOnPort(gateway.Port()) {
-		return portJSON{}, fmt.Errorf("another magpie serves the gateway at %s: set its port there, or quit it first", gateway.URL())
+	if gw == nil {
+		// the Codex relay a magpie quitting left at the port lets go of
+		// it, as when this one starts to serve (backend.go)
+		codexrelay.Leave()
+	}
+	// whatever takes a connection at the port (Taken) is looked up, not
+	// only one that answered ServedBy in its 700ms: a magpie of this
+	// computer's answering late on a busy machine read as none, and the
+	// port could move past it (#5180). When the processes can't be
+	// listed, what answers there says, given longer than ServedBy.
+	if gw == nil && gateway.Taken() {
+		mine, err := magpieOnPort(gateway.Port())
+		if err != nil {
+			mine = gateway.ServedWithin(servedWait).Running
+		}
+		if mine {
+			return portJSON{}, fmt.Errorf("another magpie serves the gateway at %s: set its port there, or quit it first", gateway.URL())
+		}
 	}
 	host := "127.0.0.1"
 	if cur.LAN {
