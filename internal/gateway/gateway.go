@@ -381,8 +381,14 @@ type Served struct {
 func ServedBy() Served { return ServedAt(URL()) }
 
 // servedAt is ServedBy for the magpie at base.
-func ServedAt(base string) Served {
-	c := &http.Client{Timeout: 700 * time.Millisecond}
+func ServedAt(base string) Served { return servedWithin(base, 700*time.Millisecond) }
+
+// ServedWithin is ServedBy waiting up to d for the answer.
+func ServedWithin(d time.Duration) Served { return servedWithin(URL(), d) }
+
+// servedWithin is ServedAt waiting up to d for the answer.
+func servedWithin(base string, d time.Duration) Served {
+	c := &http.Client{Timeout: d}
 	res, err := c.Get(base + "/")
 	if err != nil {
 		return Served{}

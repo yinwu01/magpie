@@ -1,11 +1,14 @@
 package gui
 
 import (
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,8 +22,8 @@ import (
 // program to quit, and leaves it running; and Settings' port, which was
 // refused while "another magpie" served, moves this magpie's gateway to a
 // port of its own. A magpie program of this computer's on the port still
-// has its port set there. Run against copies of the test binary, on ports
-// of the test's own.
+// has its port set there, also when it answers late (#5180). Run against
+// copies of the test binary, on ports of the test's own.
 func TestGatewayHeldByAContainer(t *testing.T) {
 	h := t.TempDir()
 	t.Setenv("HOME", h)
@@ -56,6 +59,7 @@ func TestGatewayHeldByAContainer(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
+	late := filepath.Join(t.TempDir(), "late")
 	start := func(name string) (*exec.Cmd, chan struct{}) {
 		if runtime.GOOS == "windows" {
 			name += ".exe"
@@ -71,7 +75,7 @@ func TestGatewayHeldByAContainer(t *testing.T) {
 			}
 		}
 		cmd := exec.Command(bin, "-test.run=^$")
-		cmd.Env = append(os.Environ(), "MAGPIE_TEST_FAKE_GATEWAY="+addr)
+		cmd.Env = append(os.Environ(), "MAGPIE_TEST_FAKE_GATEWAY="+addr, "MAGPIE_TEST_FAKE_LATE="+late)
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)
 		}
@@ -88,8 +92,29 @@ func TestGatewayHeldByAContainer(t *testing.T) {
 
 	// a magpie of this computer's on the port: its port is set there
 	local, localEnded := start("magpie")
-	if _, err := setPort(freePort(t)); err == nil || settings.Load().Port != from {
+	if _, err := setPort(freePort(t)); !servesThere(err) || settings.Load().Port != from {
 		t.Fatalf("moved past a magpie of this computer's: %v", err)
+	}
+	// and when it answers past ServedBy's wait, as on a busy machine: who
+	// holds the port says it, not whether it answered in time (#5180)
+	if err := os.WriteFile(late, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := setPort(freePort(t)); !servesThere(err) || settings.Load().Port != from {
+		t.Fatalf("moved past a magpie of this computer's that answered late: %v", err)
+	}
+	// and when the processes can't be listed (lsof cut short on a busy
+	// Mac): what answers there, given longer than ServedBy, says it
+	lookup := listeningOn
+	listeningOn = func(context.Context, int) ([]int, error) { return nil, errors.New("lsof: signal: killed") }
+	t.Cleanup(func() { listeningOn = lookup })
+	_, err = setPort(freePort(t))
+	listeningOn = lookup
+	if !servesThere(err) || settings.Load().Port != from {
+		t.Fatalf("moved past a late magpie whose port's processes couldn't be listed: %v", err)
+	}
+	if err := os.Remove(late); err != nil {
+		t.Fatal(err)
 	}
 	local.Process.Kill()
 	<-localEnded
@@ -123,4 +148,10 @@ func TestGatewayHeldByAContainer(t *testing.T) {
 		t.Fatal("the container's magpie was ended")
 	default:
 	}
+}
+
+// servesThere says err is setPort's refusal for another magpie on the
+// port, not some other failure.
+func servesThere(err error) bool {
+	return err != nil && strings.HasPrefix(err.Error(), "another magpie serves the gateway at ")
 }

@@ -23,15 +23,22 @@ import (
 // version, started another way: then it also says its pid, streams
 // /stream as an agent's reply (20 lines, 100ms apart) and tells
 // /v1/magpie/concurrency how many of those are in flight, as a magpie
-// since 3b6ca0557 does.
+// since 3b6ca0557 does. Once the file MAGPIE_TEST_FAKE_LATE names is
+// there, it answers 1.5s late.
 func fakeOlderGateway(addr string) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		os.Exit(3)
 	}
 	version, serves := os.Getenv("MAGPIE_TEST_FAKE_VERSION"), os.Getenv("MAGPIE_TEST_FAKE_SERVES")
+	late := os.Getenv("MAGPIE_TEST_FAKE_LATE")
 	var streams atomic.Int32
 	http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// once the test makes this file, it answers past ServedBy's wait,
+		// as a magpie on a busy machine does
+		if late != "" && fileThere(late) {
+			time.Sleep(1500 * time.Millisecond)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case version == "":
@@ -174,4 +181,9 @@ func TestGatewayFixQuitsOnlyAMagpie(t *testing.T) {
 	if now := served.Load(); now == nil || now == gw || !answers(port) {
 		t.Fatal("the gateway wasn't restarted")
 	}
+}
+
+func fileThere(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
