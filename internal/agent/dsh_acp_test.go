@@ -46,6 +46,10 @@ func TestDshACPSettingsGetTheRoute(t *testing.T) {
 	own := "# mine\nllm-deepseek:\n  thinking: enabled\nllm-pi-ai:\n  providers:\n    mine:\n      displayName: Mine\n      apiKeyEnv: MINE_API_KEY\n      api: openai-completions\n      baseURL: https://mine.example/v1\n      models:\n        - id: m1\n    magpie:\n      api: openai-responses\n"
 	os.Remove(settings)
 	os.WriteFile(settings, []byte(own), 0o644)
+	// the user's file is 0644 whatever umask the test runs under: under
+	// 077 it was 0600 from the start, and the check after the sync read
+	// that as magpie's (#5238)
+	os.Chmod(settings, 0o644)
 	if err := a.Sync(); err != nil {
 		t.Fatal(err)
 	}
@@ -138,6 +142,7 @@ func TestDshStoreMadeOwnerOnly(t *testing.T) {
 	os.WriteFile(web, []byte("# Your patch layer for this dsh profile.\n"), 0o644)
 	creds := filepath.Join(dir, ".credentials.yaml")
 	os.WriteFile(creds, []byte("version: 1\nrefs:\n  DEEPSEEK_API_KEY: sk-mine\n"), 0o644)
+	os.Chmod(creds, 0o644) // 0644 under any umask, or the first check checks nothing (#5238)
 	a := dsh(home)
 	if err := a.Field("model").Set("magpie/deepseek/pro"); err != nil {
 		t.Fatal(err)
