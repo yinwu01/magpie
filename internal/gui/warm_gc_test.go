@@ -194,11 +194,23 @@ func TestSteadyGCKeepsTheUsersGOGC(t *testing.T) {
 }
 
 // TestSteadyGCRetunesAfterACollection: from the start GOGC is half, each
-// collection sets it for the heap it left (a test's heap is under the
-// room: Go's 100), a read under a tight GC still sets its tenth, and after
-// the read the next collection sets it for the heap again.
+// collection sets it for the heap it left (Go's 100, the room set far
+// over the heap), a read under a tight GC still sets its tenth, and after
+// the read the next collection sets it for the heap again. With the 32 MB
+// room the package's heap here decided it: 45 MB live at the test's start
+// (71), held by earlier tests' gateways until their idle release, 30s
+// after their last request.
 func TestSteadyGCRetunesAfterACollection(t *testing.T) {
 	steadyOff(t)
+	tightGC.Lock()
+	room := steadyGCRoom
+	steadyGCRoom = 1 << 40
+	tightGC.Unlock()
+	t.Cleanup(func() {
+		tightGC.Lock()
+		steadyGCRoom = room
+		tightGC.Unlock()
+	})
 	t.Setenv("GOGC", "")
 	debug.SetGCPercent(100)
 	steadyGCStart()

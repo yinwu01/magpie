@@ -996,8 +996,8 @@ const steadyGCPercent = 50
 
 // steadyGCRoom is the least it grows by: half of a small heap is a few
 // MB, and a heap under 64 MB grows by 32 MB, never by more than Go's
-// default.
-const steadyGCRoom = 32 << 20
+// default. A test sets it far over what its package's heap holds.
+var steadyGCRoom int64 = 32 << 20
 
 // steadyPercent is the GOGC steadyGCStart sets on a live heap of live
 // bytes (0 before the first collection: steadyGCPercent).
