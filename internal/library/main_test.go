@@ -2,6 +2,7 @@ package library
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +13,9 @@ import (
 
 // The tests run in a home of their own, never the user's real files, with
 // a temp dir of their own: what they leave in it is theirs, and a skill's
-// download left there fails the run (#2321).
+// download left there fails the run (#2321). And off the network
+// (testenv.Offline): TestMarketFindsByAddress asked
+// raw.githubusercontent.com (#5255).
 func TestMain(m *testing.M) {
 	// started as magpie's own image or browser server (Args mcp image,
 	// mcp browser): the fake server, for the hub to take it for that one
@@ -20,7 +23,8 @@ func TestMain(m *testing.M) {
 		os.Args = []string{os.Args[0], "-test.run=^TestFakeMCPServer$"}
 	}
 	if os.Getenv(testenv.Marker) != "" {
-		testenv.Main(m) // started again by a test: in its temp dir already
+		// started again by a test: in its temp dir already
+		os.Exit(testenv.RunIn(m, offline))
 	}
 	tmp, err := os.MkdirTemp("", "magpie-library-test-")
 	if err != nil {
@@ -33,7 +37,7 @@ func TestMain(m *testing.M) {
 	// Codex given its servers by their commands, as the tests expect;
 	// mcp_run_test.go turns it on
 	runOn = false
-	code := testenv.Run(m)
+	code := testenv.RunIn(m, offline)
 	forgetProbes()
 	if left := leftDownloads(tmp); len(left) > 0 && code == 0 {
 		fmt.Fprintf(os.Stderr, "library: the tests left %d skill downloads in the temp dir: %s\n", len(left), strings.Join(left, ", "))
@@ -61,4 +65,18 @@ func leftDownloads(dir string) []string {
 		got[i] = filepath.Base(p)
 	}
 	return got
+}
+
+func offline(string) { testenv.Offline() }
+
+// A request through http.DefaultTransport is refused at once, never sent.
+func TestStaysOffTheNetwork(t *testing.T) {
+	resp, err := http.Get("https://raw.githubusercontent.com/")
+	if err == nil {
+		resp.Body.Close()
+		t.Fatalf("raw.githubusercontent.com answered %s: the package's tests reach the network", resp.Status)
+	}
+	if !strings.Contains(err.Error(), "tests stay off the network") {
+		t.Fatalf("raw.githubusercontent.com: %v, not testenv's refusal", err)
+	}
 }
