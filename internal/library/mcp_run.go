@@ -430,24 +430,35 @@ func runStart(s *runSession, spec runSpec, init json.RawMessage) (*runChild, jso
 	if err != nil {
 		return nil, nil, err
 	}
-	out, err := cmd.StdoutPipe()
+	// a pipe of magpie's own, as startServer's: Wait closed a
+	// StdoutPipe as the server exited, and the reply it wrote last was
+	// lost with it (#5652)
+	out, w, err := os.Pipe()
 	if err != nil {
+		in.Close()
 		return nil, nil, err
 	}
+	cmd.Stdout = w
 	errs := &tail{}
 	cmd.Stderr = errs
 	tree, err := proc.StartTree(cmd)
+	w.Close() // the server has its own copy
 	if err != nil {
+		out.Close()
 		return nil, nil, fmt.Errorf("couldn't start %s: %w", spec.Command, err)
 	}
 	c := &runChild{tree: tree, in: in, errs: errs, waits: map[string]chan json.RawMessage{}, done: make(chan struct{})}
+	waited := make(chan struct{})
+	before, grace := beforeServerRead, proc.OutputGrace
 	go func() {
 		err := tree.Wait()
+		close(waited)
 		if err != nil && !errors.Is(err, os.ErrProcessDone) {
 			if t := errs.last(); t != "" {
 				log.Printf("library: MCP server %s for Codex ended: %v: %s", s.name, err, t)
 			}
 		}
+		closeOut(out, c.done, grace)
 	}()
 	go func() {
 		defer func() {
@@ -459,6 +470,7 @@ func runStart(s *runSession, spec runSpec, init json.RawMessage) (*runChild, jso
 			}
 			c.mu.Unlock()
 		}()
+		before(waited)
 		sc := bufio.NewScanner(out)
 		sc.Buffer(make([]byte, 64*1024), 64<<20)
 		for sc.Scan() {

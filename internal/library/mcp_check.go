@@ -667,9 +667,10 @@ func closeOut(out io.Closer, read <-chan struct{}, grace time.Duration) {
 
 // beforeServerRead runs as a command server's stdout starts to be read,
 // given what closes once the server has been waited for: for a test to
-// read only after it has exited (TestServerReplyReadAfterExit). Taken
-// before the reader's goroutine starts, so a test can put it back as the
-// readers of servers it started still run.
+// read only after it has exited (TestServerReplyReadAfterExit,
+// TestRunReplyReadAfterExit). Taken before the reader's goroutine
+// starts, so a test can put it back as the readers of servers it
+// started still run.
 var beforeServerRead = func(waited <-chan struct{}) {}
 
 // checkStdioAt starts the command on this machine, or in WSL distro, and

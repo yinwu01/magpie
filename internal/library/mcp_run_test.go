@@ -485,3 +485,22 @@ func TestRunDirectServerIsCodexsCommand(t *testing.T) {
 		t.Fatalf("cocoindex shared again:\n%s", codex)
 	}
 }
+
+// A server that answers initialize and exits at once has its answer read,
+// though the read starts only after it has exited and been waited for:
+// cmd.Wait closed a StdoutPipe under the read, and Codex was told the
+// server ended in place of what it said (#5652).
+func TestRunReplyReadAfterExit(t *testing.T) {
+	old := beforeServerRead
+	beforeServerRead = func(waited <-chan struct{}) { <-waited }
+	t.Cleanup(func() { beforeServerRead = old })
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := runSpec{Command: self, Args: []string{"-test.run=^TestFakeMCPServer$"}, Env: map[string]string{fakeMode: "refuse"}}
+	_, _, err = runStart(&runSession{name: "fake"}, spec, json.RawMessage(`{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"codex","version":"1"}}`))
+	if err == nil || err.Error() != "couldn't start fake: initialize: bad token" {
+		t.Fatalf("got %v, want initialize's error, bad token", err)
+	}
+}

@@ -4,6 +4,7 @@ package library
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -43,7 +44,7 @@ func TestFakeMCPLeaver(t *testing.T) {
 }
 
 // A server that exits while what it started keeps its stdout is still
-// told as exited, by the check and the hub: its output is closed
+// told as exited, by the check, the hub and Codex's run: its output is closed
 // proc.OutputGrace after it is waited for, as Wait closing a StdoutPipe
 // ended the read before (#5652).
 func TestServerExitLeavingItsStdout(t *testing.T) {
@@ -80,6 +81,16 @@ func TestServerExitLeavingItsStdout(t *testing.T) {
 		}
 		if err == nil || !strings.HasPrefix(err.Error(), "it exited (3)") {
 			t.Fatalf("got %v, want it exited (3)", err)
+		}
+	})
+	t.Run("run", func(t *testing.T) {
+		start := time.Now()
+		_, _, err := runStart(&runSession{name: "fake"}, runSpec{Command: s.Command, Args: s.Args, Env: s.Env}, json.RawMessage(`{}`))
+		if err == nil || err.Error() != "couldn't start fake: it ended: giving up" {
+			t.Fatalf("got %v, want it ended: giving up", err)
+		}
+		if d := time.Since(start); d > 30*time.Second {
+			t.Errorf("took %s", d)
 		}
 	})
 }
