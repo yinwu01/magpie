@@ -35,6 +35,20 @@ type planQuotaSource struct {
 	sure bool
 }
 
+// QuotaKind is the kind of card (Quota.Kind) p's allowance is told on:
+// a subscription's, a plan's when p's key is one PlanQuotas reads as a
+// plan's for sure, else a key's balance. Said without asking anything,
+// for a provider whose card isn't read: one switched off (#5741).
+func QuotaKind(p Provider) string {
+	if p.Account != nil {
+		return "subscription"
+	}
+	if src, ok := planQuotaSourceOf(p.atKeyPlan(p.first().Plan)); ok && src.sure {
+		return "plan"
+	}
+	return "balance"
+}
+
 func planQuotaSourceOf(p Provider) (planQuotaSource, bool) {
 	for _, base := range []string{p.Chat, p.Anthropic, p.Responses} {
 		coding := strings.Contains(base, "/api/coding/")

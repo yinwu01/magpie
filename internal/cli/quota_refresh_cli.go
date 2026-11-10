@@ -77,6 +77,10 @@ func quotaRefreshCmd(args []string) error {
 		}
 	}
 	if len(qs) == 0 {
+		// one switched off is left alone, not read (#5741)
+		if p, err := provider.Find(id); err == nil && p.Off && !provider.IsRemoteCard(id) {
+			return fmt.Errorf("%s is switched off · its allowance isn't read while it is off; turn it on: magpie provider on %s", p.Name, p.ID)
+		}
 		if user != "" {
 			return fmt.Errorf("no card of %s · %s · magpie quota %s lists its accounts", id, user, id)
 		}

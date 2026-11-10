@@ -680,7 +680,9 @@ func quotaMatches(q provider.Quota, only []string) bool {
 
 // withUntold adds a line for each provider named that told nothing, saying
 // why, rather than leaving it out as if it weren't there; a name that is no
-// provider at all is an error.
+// provider at all is an error. A provider switched off is left alone, its
+// allowance not read (#2226), and says so, as the kind of card it has when
+// on, not as one with no balance endpoint (#5741).
 func withUntold(qs []provider.Quota, only []string) ([]provider.Quota, error) {
 	for _, o := range only {
 		if o == "subscription" || o == "plan" || o == "balance" || slices.ContainsFunc(qs, func(q provider.Quota) bool { return quotaMatches(q, []string{o}) }) {
@@ -689,6 +691,11 @@ func withUntold(qs []provider.Quota, only []string) ([]provider.Quota, error) {
 		p, err := provider.Find(o)
 		if err != nil {
 			return nil, err
+		}
+		if p.Off {
+			qs = append(qs, provider.Quota{Provider: p.ID, Name: p.Name, Kind: provider.QuotaKind(*p), Windows: []provider.QuotaSpan{},
+				Error: "switched off · its allowance isn't read while it is off; turn it on: magpie provider on " + p.ID})
+			continue
 		}
 		qs = append(qs, provider.Quota{Provider: p.ID, Name: p.Name, Kind: "balance", Windows: []provider.QuotaSpan{},
 			Error: "not configured · no balance endpoint known for it; set Balance URL and Balance field in its editor"})
