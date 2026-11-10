@@ -71,7 +71,7 @@ type claudeLocal struct {
 // forward slashes on Windows.
 func claudeRoot(dir string) string {
 	r := dir
-	if g, ok := gitOf(dir); ok {
+	if g, ok := claudeGitOf(dir); ok {
 		if m := g.mainTop(); m != "" {
 			r = m
 		} else {
@@ -495,7 +495,7 @@ func (l *Library) treesChanged() bool {
 		// a folder made a repository since (git init): its entries go
 		// into the new info/exclude
 		if len(p.Placed)+len(p.MadeFiles) > 0 {
-			if g, ok := gitOf(p.Dir); ok {
+			if g, ok, _ := gitOf(p.Dir); ok {
 				b, _ := os.ReadFile(filepath.Join(g.Common, "info", "exclude"))
 				if !strings.Contains(string(b), excludeBegin(p.Dir)) {
 					return true

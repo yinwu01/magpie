@@ -581,7 +581,9 @@ func parse(reply string) []found {
 // new ones. Each rests on words the user wrote (in their, as bare gives
 // it): one without is the assistant's own instructions or notes said back,
 // or made up, and is dropped. A kind not known is a fact; a project scope
-// without a project is everyone's.
+// without a folder is everyone's, and one whose folder's project is
+// unknown (memory.ProjectOf: a .git on the way it can't read) is dropped,
+// never made everyone's.
 func keep(fs []found, s sessions.Session, proj *memory.Project, their string) int {
 	n := 0
 	for i, f := range fs {
@@ -600,8 +602,13 @@ func keep(fs []found, s sessions.Session, proj *memory.Project, their string) in
 			kind = memory.Fact
 		}
 		scope, p := memory.Global, (*memory.Project)(nil)
-		if strings.EqualFold(strings.TrimSpace(f.Scope), "project") && proj != nil {
-			scope, p = "project:"+proj.Key, proj
+		if strings.EqualFold(strings.TrimSpace(f.Scope), "project") {
+			if proj == nil && filepath.IsAbs(strings.TrimSpace(s.Cwd)) {
+				continue
+			}
+			if proj != nil {
+				scope, p = "project:"+proj.Key, proj
+			}
 		}
 		why, status := cut(strings.TrimSpace(f.Why), 300), memory.Candidate
 		src := &memory.Source{Agent: s.Agent, Session: s.ID, Dir: s.Cwd, Quote: cut(strings.TrimSpace(f.Quote), 300)}

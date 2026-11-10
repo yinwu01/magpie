@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -176,6 +177,43 @@ func TestReadsQuietSessionsOnce(t *testing.T) {
 	}
 	if n := len(memories(t)); n != 3 {
 		t.Fatalf("%d memories", n)
+	}
+}
+
+// A project's finding from a folder whose project is unknown (a .git on
+// the way that can't be read) is dropped, never made everyone's; one
+// meant for everyone is kept.
+func TestUnknownProjectKeptForNobody(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a folder isn't locked by its mode")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a folder whatever its mode")
+	}
+	sb := newSandbox(t)
+	on(t, "")
+	sb.session("s", time.Hour, "never use npm here, pnpm only", "keep answers short")
+	locked := filepath.Join(sb.dir, "proj", ".git")
+	if err := os.MkdirAll(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+	sb.reply = func(string) (string, error) {
+		return `[{"text":"Use pnpm, never npm","kind":"rule","scope":"project","quote":"never use npm here, pnpm only"},
+			{"text":"Prefers short answers","kind":"preference","scope":"global","quote":"keep answers short"}]`, nil
+	}
+	if _, err := Run(context.Background(), "a/m", sb.complete); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, m := range memories(t) {
+		got = append(got, m.Text+" "+m.Scope)
+	}
+	if !slices.Equal(got, []string{"Prefers short answers global"}) {
+		t.Errorf("kept %q, want the global one alone", got)
 	}
 }
 

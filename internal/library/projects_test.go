@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/yetone/magpie/internal/provider"
 )
 
 func isLink(t *testing.T, p string) bool {
@@ -39,10 +41,16 @@ func projectLib(t *testing.T) (h, proj string) {
 	return h, proj
 }
 
-// gitInit makes dir a repository's top folder, as git init does.
+// gitInit makes dir a repository's top folder, as git init does: what
+// git looks for in its .git (provider.GitAt), a HEAD, objects and refs.
 func gitInit(t *testing.T, dir string) {
 	t.Helper()
 	write(t, filepath.Join(dir, ".git", "HEAD"), "ref: refs/heads/main\n")
+	for _, d := range []string{"objects", "refs/heads"} {
+		if err := os.MkdirAll(filepath.Join(dir, ".git", d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 // excluded is magpie's block in the repository's info/exclude for proj,
@@ -186,6 +194,96 @@ func TestProjectOutsideGit(t *testing.T) {
 	}
 	if l, _ = load(); l.treesChanged() {
 		t.Error("synced again with nothing changed")
+	}
+}
+
+// A .git git doesn't take for a repository, an empty folder say, is
+// passed over as git passes it over: a project under one is outside git
+// and nothing goes into it, and one under it in a repository has its
+// entries in the repository's info/exclude. An empty /tmp/.git owned by
+// another user failed every project under /tmp ("mkdir /tmp/.git/info:
+// permission denied"). Claude Code's own root takes any .git (claudeRoot).
+func TestProjectUnderAnEmptyGit(t *testing.T) {
+	_, proj := projectLib(t)
+	os.RemoveAll(filepath.Join(proj, ".git"))
+	above := filepath.Dir(proj)
+	if provider.GitOnDisk(filepath.Dir(above)) == "yes" {
+		t.Skip("the temp folder is in a repository, whose info/exclude this would write")
+	}
+	if err := os.MkdirAll(filepath.Join(above, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ok(t)(ProjectSkill(proj, "docx", []string{"claude"}))
+	if _, err := os.Stat(filepath.Join(above, ".git", "info")); err == nil {
+		t.Error("magpie wrote into a .git that is no repository")
+	}
+	if l, _ := load(); l.treesChanged() {
+		t.Error("a folder outside git is synced again every round")
+	}
+	if r := claudeRoot(proj); r != filepath.ToSlash(above) {
+		t.Errorf("Claude Code's root %q, want the empty .git's folder %q", r, above)
+	}
+
+	top := t.TempDir()
+	gitInit(t, top)
+	inner := filepath.Join(top, "web", "app")
+	if err := os.MkdirAll(filepath.Join(top, "web", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(inner, ".gitignore"), "node_modules/\n")
+	ok(t)(AddProject(inner))
+	ok(t)(ProjectSkill(inner, "docx", []string{"claude"}))
+	if b, _ := os.ReadFile(filepath.Join(top, ".git", "info", "exclude")); !strings.Contains(string(b), "/web/app/.claude/skills/docx\n") {
+		t.Errorf("the repository's info/exclude:\n%s", b)
+	}
+
+	// a .git file that names no repository, in a repository: git stops
+	// there, outside one, and the repository's info/exclude doesn't get
+	// the project
+	write(t, filepath.Join(top, "garbage", ".git"), "not a gitfile\n")
+	sub := filepath.Join(top, "garbage", "app")
+	write(t, filepath.Join(sub, ".gitignore"), "node_modules/\n")
+	ok(t)(AddProject(sub))
+	ok(t)(ProjectSkill(sub, "docx", []string{"claude"}))
+	if b, _ := os.ReadFile(filepath.Join(top, ".git", "info", "exclude")); strings.Contains(string(b), "/garbage/app/") {
+		t.Errorf("a project under a .git file naming nothing is in the repository's info/exclude:\n%s", b)
+	}
+}
+
+// A .git on the way that can't be read leaves unknown whether the project
+// is in a repository: keeping it out of git is a problem, and nothing is
+// written into the info/exclude of a repository above it.
+func TestProjectUnderAnUnreadGit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a file isn't locked by its mode")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file whatever its mode")
+	}
+	sandbox(t)
+	src := filepath.Join(t.TempDir(), "src")
+	skill(t, filepath.Join(src, "docx"), "docx", "Word")
+	ok(t)(InstallSkills(src, []string{"docx"}, nil))
+	top := t.TempDir()
+	gitInit(t, top)
+	locked := filepath.Join(top, "locked", ".git")
+	write(t, locked, "not a gitfile\n")
+	proj := filepath.Join(top, "locked", "app")
+	write(t, filepath.Join(proj, ".gitignore"), "node_modules/\n")
+	ok(t)(AddProject(proj))
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o644) })
+	r, err := ProjectSkill(proj, "docx", []string{"claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Problems) != 1 || !strings.HasPrefix(r.Problems[0].Error, "keeping it out of git: ") {
+		t.Errorf("problems: %+v, want keeping it out of git", r.Problems)
+	}
+	if b, _ := os.ReadFile(filepath.Join(top, ".git", "info", "exclude")); strings.Contains(string(b), "/locked/app/") {
+		t.Errorf("the repository above has the project:\n%s", b)
 	}
 }
 

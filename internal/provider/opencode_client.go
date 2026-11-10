@@ -409,43 +409,33 @@ func openCodeLocalDir(dir string) string {
 var (
 	openCodeRemoteRe = lazyre.New(`(?m)^\s*\[remote\s+"([^"]+)"\]([^\[]*)`)
 	openCodeURLRe    = lazyre.New(`(?m)^\s*url\s*=\s*(.+)$`)
-	openCodeGitdirRe = lazyre.New(`(?m)^gitdir:\s*(.+)$`)
 	openCodeSchemeRe = lazyre.New(`(?i)^[a-z][a-z0-9+.-]*://`)
 	openCodeSCPRe    = lazyre.New(`^([^@/:]+@)?([^/:]+):(.+)$`)
 	openCodeDotGitRe = lazyre.New(`\.git/?$`)
 )
 
 // openCodeRepository is the git repository dir is in, as OpenCode finds
-// it: the nearest .git up from dir (a worktree's file naming its gitdir
-// and that one's commondir), its root, and the remote OpenCode names it by
-// (origin, else the first one listed) as host/path, "" when none.
+// it: git's own search from dir (GitAt at each .git going up; OpenCode
+// 2.2.5's Project.resolve asks git rev-parse from the nearest .git's
+// folder, which passes over a .git git doesn't take, an empty folder say,
+// and fails at a .git file naming none), its root, and the remote OpenCode
+// names it by (origin, else the first one listed) as host/path, "" when
+// none. A .git folder it can't read is passed over and a .git file it
+// can't read is none, as git does with each (git 2.34: rev-parse finds
+// the repository above the one and fails at the other).
 func openCodeRepository(dir string) (root, remote string, ok bool) {
 	for d := dir; ; {
 		dotGit := filepath.Join(d, ".git")
-		if fi, err := os.Stat(dotGit); err == nil {
-			common := dotGit
-			if !fi.IsDir() {
-				b, err := os.ReadFile(dotGit)
-				if err != nil {
-					return d, "", true
-				}
-				m := openCodeGitdirRe.FindStringSubmatch(string(b))
-				if m == nil || strings.TrimSpace(m[1]) == "" {
-					return "", "", false
-				}
-				own := strings.TrimSpace(m[1])
-				if !filepath.IsAbs(own) {
-					own = filepath.Join(d, own)
-				}
-				common = own
-				if c, err := os.ReadFile(filepath.Join(own, "commondir")); err == nil {
-					shared := strings.TrimSpace(string(c))
-					if !filepath.IsAbs(shared) {
-						shared = filepath.Join(own, shared)
-					}
-					common = shared
-				}
+		git, common, err := GitAt(dotGit)
+		if err != nil {
+			if fi, serr := os.Stat(dotGit); serr != nil || !fi.IsDir() {
+				return "", "", false
 			}
+		}
+		if git == "no" {
+			return "", "", false
+		}
+		if git == "yes" {
 			config, err := os.ReadFile(filepath.Join(common, "config"))
 			if err != nil {
 				return d, "", true

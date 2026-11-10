@@ -223,6 +223,7 @@ func TestProjectWorktreeFollows(t *testing.T) {
 	wt := filepath.Join(filepath.Dir(proj), "shop-wt")
 	own := filepath.Join(proj, ".git", "worktrees", "shop-wt")
 	write(t, filepath.Join(wt, ".git"), "gitdir: "+own+"\n")
+	write(t, filepath.Join(own, "HEAD"), "ref: refs/heads/shop-wt\n")
 	write(t, filepath.Join(own, "gitdir"), filepath.Join(wt, ".git")+"\n")
 	write(t, filepath.Join(own, "commondir"), "../..\n")
 	l, _ := load()
