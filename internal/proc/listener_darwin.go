@@ -7,37 +7,24 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
-	"strings"
 
 	"golang.org/x/sys/unix"
 )
 
-// listeningOn asks lsof, which lists this user's processes.
-func listeningOn(ctx context.Context, port int) ([]int, error) {
+// listeningOn asks lsof, which lists this user's processes, for each
+// listener's address too (-F ptn: -t would say the pid alone).
+func listeningOn(ctx context.Context, host string, port int) ([]int, error) {
 	lsof := "/usr/sbin/lsof"
 	if _, err := os.Stat(lsof); err != nil {
 		lsof = "lsof"
 	}
-	out, err := CommandContext(ctx, lsof, "-nP", "-a", "-iTCP:"+strconv.Itoa(port), "-sTCP:LISTEN", "-t").Output()
+	out, err := CommandContext(ctx, lsof, "-nP", "-a", "-iTCP:"+strconv.Itoa(port), "-sTCP:LISTEN", "-F", "ptn").Output()
 	var ee *exec.ExitError
 	if err != nil && !(errors.As(err, &ee) && len(bytes.TrimSpace(out)) == 0) {
 		return nil, err
 	}
 	// lsof says 1 for none found
-	return pids(string(out)), nil
-}
-
-// pids reads one id a line.
-func pids(out string) []int {
-	var ps []int
-	seen := map[int]bool{}
-	for _, l := range strings.Fields(out) {
-		if n, err := strconv.Atoi(l); err == nil && n > 0 && !seen[n] {
-			seen[n] = true
-			ps = append(ps, n)
-		}
-	}
-	return ps
+	return holders(lsofSockets(string(out)), host), nil
 }
 
 // executable reads kern.procargs2: the argument count, then the path the

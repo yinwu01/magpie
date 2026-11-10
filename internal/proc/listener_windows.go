@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strconv"
-	"strings"
 
 	"golang.org/x/sys/windows"
 )
@@ -15,23 +14,16 @@ import (
 // nobody holds read as an error and a take-over waited for the older
 // magpie's port to be let go until it said "stuck" (#2231). That one
 // failure is no listener, as lsof and /proc say it; any other failure, or
-// a PowerShell cut short, is still an error.
-func listeningOn(ctx context.Context, port int) ([]int, error) {
+// a PowerShell cut short, is still an error. Each line is a listener's
+// address and owner, for holders to keep those that hold host.
+func listeningOn(ctx context.Context, host string, port int) ([]int, error) {
 	out, err := CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command",
-		`try { Get-NetTCPConnection -State Listen -LocalPort `+strconv.Itoa(port)+` -ErrorAction Stop | ForEach-Object { $_.OwningProcess } } `+
+		`try { Get-NetTCPConnection -State Listen -LocalPort `+strconv.Itoa(port)+` -ErrorAction Stop | ForEach-Object { [string]$_.LocalAddress + ' ' + $_.OwningProcess } } `+
 			`catch { if ($_.CategoryInfo.Category -eq 'ObjectNotFound') { exit 0 }; [Console]::Error.WriteLine($_); exit 1 }`).Output()
 	if err != nil {
 		return nil, err
 	}
-	var ps []int
-	seen := map[int]bool{}
-	for _, l := range strings.Fields(string(out)) {
-		if n, err := strconv.Atoi(l); err == nil && n > 0 && !seen[n] {
-			seen[n] = true
-			ps = append(ps, n)
-		}
-	}
-	return ps, nil
+	return holders(psSockets(string(out)), host), nil
 }
 
 func executable(pid int) (string, error) {

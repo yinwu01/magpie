@@ -4,6 +4,7 @@ import (
 	"context"
 	"debug/buildinfo"
 	"errors"
+	"net"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -19,10 +20,22 @@ import (
 // run as administrator.
 var ErrDenied = errors.New("not allowed to end it")
 
-// ListeningOn is the ids of the processes listening on TCP port, that this
-// user can see: lsof on a Mac, /proc on Linux, Get-NetTCPConnection on
-// Windows. Another user's process may be missing.
-func ListeningOn(ctx context.Context, port int) ([]int, error) { return listeningOn(ctx, port) }
+// ListeningOn is the ids of the processes listening on TCP addr ("host:
+// port"), that this user can see: lsof on a Mac, /proc on Linux,
+// Get-NetTCPConnection on Windows. Another user's process may be missing.
+// Only a listener that holds addr's host counts (holding): one on the same
+// port number at another address is another program's (#5816).
+func ListeningOn(ctx context.Context, addr string) ([]int, error) {
+	host, p, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	port, err := strconv.Atoi(p)
+	if err != nil {
+		return nil, err
+	}
+	return listeningOn(ctx, host, port)
+}
 
 // Executable is the path of the program process pid runs, as the system
 // says it: the one it was started from, also when that file has been

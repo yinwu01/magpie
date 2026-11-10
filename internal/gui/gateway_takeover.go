@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
-	"strconv"
+	"strings"
 	"time"
 
 	"github.com/yetone/magpie/internal/gateway"
@@ -122,24 +122,29 @@ func startHere() gatewayFixJSON {
 	if o := gateway.ServedBy(); o.Running {
 		out.Version = o.Version
 	}
-	port, _ := strconv.Atoi(out.Port)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if pids, err := proc.ListeningOn(ctx, port); err == nil {
-		for _, pid := range pids {
-			if pid == os.Getpid() {
-				continue
-			}
-			out.PID = pid
-			out.Path, _ = proc.Executable(pid)
-			if proc.RunsMagpie(pid, out.Path) {
-				// a magpie took it back as soon as the other quit
-				out.Reason = "respawned"
-			} else if proc.IsForwarder(out.Path) {
-				out.Reason = "container"
-			}
-			break
+	// the one that answers where the gateway is reached, else any that
+	// keeps this one's listen (on every address, when shared)
+	for _, at := range slices.Compact([]string{gatewayAt(), gateway.ListenAddr()}) {
+		pids, err := proc.ListeningOn(ctx, at)
+		if err != nil {
+			continue
 		}
+		pids = slices.DeleteFunc(pids, func(p int) bool { return p == os.Getpid() })
+		if len(pids) == 0 {
+			continue
+		}
+		pid := pids[0]
+		out.PID = pid
+		out.Path, _ = proc.Executable(pid)
+		if proc.RunsMagpie(pid, out.Path) {
+			// a magpie took it back as soon as the other quit
+			out.Reason = "respawned"
+		} else if proc.IsForwarder(out.Path) {
+			out.Reason = "container"
+		}
+		break
 	}
 	return out
 }
@@ -148,12 +153,11 @@ func startHere() gatewayFixJSON {
 // the gateway's port, once its program is checked to be magpie's, and
 // waits until the port is let go.
 func quitMagpieOnPort(version string) gatewayFixJSON {
-	port := gateway.Port()
-	n, _ := strconv.Atoi(port)
-	out := gatewayFixJSON{Port: port, Version: version}
+	at := gatewayAt()
+	out := gatewayFixJSON{Port: gateway.Port(), Version: version}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	pids, err := proc.ListeningOn(ctx, n)
+	pids, err := proc.ListeningOn(ctx, at)
 	if err != nil {
 		out.Reason, out.Error = "error", err.Error()
 		return out
@@ -197,23 +201,25 @@ func quitMagpieOnPort(version string) gatewayFixJSON {
 	if bad := end(proc.Terminate); bad != nil {
 		return *bad
 	}
-	if letGo(ctx, n, pids, quitWait) {
+	if letGo(ctx, ":"+out.Port, pids, quitWait) {
 		return gatewayFixJSON{OK: true}
 	}
 	if bad := end(proc.Kill); bad != nil {
 		return *bad
 	}
-	if letGo(ctx, n, pids, killWait) {
+	if letGo(ctx, ":"+out.Port, pids, killWait) {
 		return gatewayFixJSON{OK: true}
 	}
 	out.Reason = "stuck"
 	return out
 }
 
-// letGo waits until none of pids listens on port.
-func letGo(ctx context.Context, port int, pids []int, wait time.Duration) bool {
+// letGo waits until none of pids listens at addr: ":"+port, on any address,
+// since the magpie being quit may hold the port at others too (its WSL
+// listener, gateway's serveWSL).
+func letGo(ctx context.Context, addr string, pids []int, wait time.Duration) bool {
 	for deadline := time.Now().Add(wait); ; time.Sleep(100 * time.Millisecond) {
-		now, err := proc.ListeningOn(ctx, port)
+		now, err := proc.ListeningOn(ctx, addr)
 		if err == nil && !slices.ContainsFunc(now, func(p int) bool { return slices.Contains(pids, p) }) {
 			return true
 		}
@@ -222,3 +228,10 @@ func letGo(ctx context.Context, port int, pids []int, wait time.Duration) bool {
 		}
 	}
 }
+
+// gatewayAt is the address the gateway is reached at, as ServedBy and Taken
+// dial it (gateway.URL): the process holding the port there is the one
+// that answered, and not one listening on the same port number at another
+// address (#5816: an emulator's qemu on mote was named for the test's fake
+// gateway on 127.0.0.1).
+func gatewayAt() string { return strings.TrimPrefix(gateway.URL(), "http://") }
