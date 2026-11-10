@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -87,22 +88,51 @@ func TestCombinedOutputOwnRuns(t *testing.T) {
 	}
 }
 
-// The context ending ends the command, and the run with it.
+// The context ending ends the command, and the run with it, which says
+// the context's error: whether it ended before the command started or
+// while it ran (#5967: "signal: killed" when the command had started).
 func TestCombinedOutputOwnContext(t *testing.T) {
 	noShell(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() {
-		_, err := CombinedOutputOwn(ctx, CommandContext(ctx, "/bin/sh", "-c", "exec sleep 30"))
-		done <- err
-	}()
-	cancel()
-	select {
-	case err := <-done:
-		if err != context.Canceled {
+	t.Run("before it starts", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if _, err := CombinedOutputOwn(ctx, CommandContext(ctx, "/bin/sh", "-c", "exec sleep 30")); err != context.Canceled {
 			t.Errorf("err %v, want canceled", err)
 		}
-	case <-time.After(20 * time.Second):
-		t.Fatal("still running after its context ended")
-	}
+	})
+	t.Run("while it runs", func(t *testing.T) {
+		started := filepath.Join(t.TempDir(), "started")
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() {
+			_, err := CombinedOutputOwn(ctx, CommandContext(ctx, "/bin/sh", "-c", `: >"$1"; exec sleep 30`, "sh", started))
+			done <- err
+		}()
+		// the context ends only once the command is running
+		deadline := time.Now().Add(20 * time.Second)
+		for {
+			if _, err := os.Stat(started); err == nil {
+				break
+			}
+			select {
+			case err := <-done:
+				t.Fatalf("ended before its context did: %v", err)
+			default:
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("the command didn't start")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		cancel()
+		select {
+		case err := <-done:
+			if err != context.Canceled {
+				t.Errorf("err %v, want canceled", err)
+			}
+		case <-time.After(20 * time.Second):
+			t.Fatal("still running after its context ended")
+		}
+	})
 }

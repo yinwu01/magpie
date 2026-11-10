@@ -21,7 +21,8 @@ import (
 // cmd.CombinedOutput does; stdin is the null device. On macOS (built with
 // cgo) the command, and what it starts, answer for themselves to macOS's
 // privacy prompts rather than to magpie. Elsewhere it is
-// cmd.CombinedOutput.
+// cmd.CombinedOutput. A run that fails once ctx has ended returns
+// ctx.Err(), not how the killed command ended.
 func CombinedOutputOwn(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
 	if cmd.Err != nil {
 		return nil, cmd.Err
