@@ -6,7 +6,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -24,23 +26,38 @@ func get(ctx context.Context, url string, after time.Duration) (int, error) {
 }
 
 // A body that keeps coming, slowly, for many times the stall's while is
-// read whole: only silence ends it (#5572).
+// read whole: only silence ends it (#5572). It runs in a synctest bubble,
+// so the watch's timer and the sender's gaps are on the bubble's clock: a
+// loaded machine that ran neither side for longer than the while read
+// nothing in 250ms of real time (#5968). The body comes through a pipe
+// that the watch's ctx breaks, as an HTTP client's transport breaks a
+// response body when its request's ctx ends.
 func TestSlowButMovingIsReadWhole(t *testing.T) {
-	const chunks = 12
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		for i := 0; i < chunks; i++ {
-			if _, err := w.Write([]byte("0123456789")); err != nil {
-				return
+	synctest.Test(t, func(t *testing.T) {
+		const after, gap = 250 * time.Millisecond, 50 * time.Millisecond
+		ctx, w := Start(context.Background(), after)
+		defer w.Stop()
+		pr, pw := io.Pipe()
+		stop := context.AfterFunc(ctx, func() { pr.CloseWithError(context.Cause(ctx)) })
+		defer stop()
+		var sent atomic.Int64
+		go func() {
+			// three of the stall's whiles, ten bytes every gap
+			for began := time.Now(); time.Since(began) < 3*after; time.Sleep(gap) {
+				if _, err := pw.Write([]byte("0123456789")); err != nil {
+					return
+				}
+				sent.Add(10)
 			}
-			w.(http.Flusher).Flush()
-			time.Sleep(50 * time.Millisecond)
+			pw.Close()
+		}()
+		b, err := io.ReadAll(w.Reader(pr))
+		synctest.Wait() // the sender is done, or asleep with the pipe broken
+		n := int(sent.Load())
+		if err = w.Err(err); err != nil || len(b) != n || n < 3*int(after/gap)*10 {
+			t.Fatalf("got %d bytes, err %v; want all %d sent (at least %d)", len(b), err, n, 3*int(after/gap)*10)
 		}
-	}))
-	defer srv.Close()
-	n, err := get(context.Background(), srv.URL, 250*time.Millisecond)
-	if err != nil || n != chunks*10 {
-		t.Fatalf("got %d bytes, err %v; want %d", n, err, chunks*10)
-	}
+	})
 }
 
 // A server that says nothing, before its answer or part way through it,
