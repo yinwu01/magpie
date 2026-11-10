@@ -41,16 +41,27 @@ func TestCappedMatchesBounded(t *testing.T) {
 
 // TestCappedIsSmall: the reason for the package. A program of the
 // bounded class is tens of kB; held to a length it is a fraction of one.
+// One program's difference in HeapAlloc also counts what the runtime
+// and the testing framework allocated or freed between the two reads,
+// tens of kB either way (#5975: capped 12,056 bytes, bounded 82,624).
+// The first read follows two collections: after one, the bounded side
+// read about 11kB on a Linux box. And the heap is measured holding
+// copies, so what other goroutines do is spread over every copy.
 func TestCappedIsSmall(t *testing.T) {
+	const copies = 100
 	heap := func(f func() any) int64 {
+		vs := make([]any, copies)
 		var a, b runtime.MemStats
 		runtime.GC()
+		runtime.GC()
 		runtime.ReadMemStats(&a)
-		v := f()
+		for i := range vs {
+			vs[i] = f()
+		}
 		runtime.GC()
 		runtime.ReadMemStats(&b)
-		runtime.KeepAlive(v)
-		return max(0, int64(b.HeapAlloc)-int64(a.HeapAlloc))
+		runtime.KeepAlive(vs)
+		return max(0, int64(b.HeapAlloc)-int64(a.HeapAlloc)) / copies
 	}
 	p := pairs[0]
 	bounded := heap(func() any { return regexp.MustCompile(p.bounded) })
