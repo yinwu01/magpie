@@ -32,17 +32,16 @@ var portFree = func(addr string) error {
 	return ln.Close()
 }
 
-// magpieOnPort says whether a magpie program of this user's listens on
-// port: the one serving the gateway is then this computer's, whose port is
-// set there. Not when the program listening is another one answering for
-// a magpie inside a container (OrbStack Helper, docker-proxy) or none this
-// user can see; when the processes can't be listed at all, it is taken to
-// be one.
-func magpieOnPort(port string) bool {
-	n, _ := strconv.Atoi(port)
+// magpieOnPort says whether a magpie program of this user's listens at
+// addr (gatewayAt): the one serving the gateway is then this computer's,
+// whose port is set there. Not when the program listening is another one
+// answering for a magpie inside a container (OrbStack Helper,
+// docker-proxy) or none this user can see; when the processes can't be
+// listed at all, it is taken to be one.
+func magpieOnPort(addr string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	pids, err := proc.ListeningOn(ctx, n)
+	pids, err := proc.ListeningOn(ctx, addr)
 	if err != nil {
 		return true
 	}
@@ -95,7 +94,7 @@ func setPort(p int) (portJSON, error) {
 		return portJSON{Port: want}, nil
 	}
 	gw := served.Load()
-	if gw == nil && gateway.Running() && magpieOnPort(gateway.Port()) {
+	if gw == nil && gateway.Running() && magpieOnPort(gatewayAt()) {
 		return portJSON{}, fmt.Errorf("another magpie serves the gateway at %s: set its port there, or quit it first", gateway.URL())
 	}
 	host := "127.0.0.1"

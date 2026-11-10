@@ -40,6 +40,10 @@ func listenAddr() string {
 	return Addr()
 }
 
+// ListenAddr is where the gateway listens (listenAddr): what a magpie that
+// can't take its port is kept from.
+func ListenAddr() string { return listenAddr() }
+
 // pinnedHost is the host MAGPIE_ADDR names, "" when it isn't set or names
 // every interface (0.0.0.0, ::, or no host).
 func pinnedHost() string {

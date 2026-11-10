@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"slices"
+	"strconv"
 	"testing"
 )
 
@@ -20,7 +21,7 @@ func TestListeningOn(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	pids, err := ListeningOn(context.Background(), ln.Addr().(*net.TCPAddr).Port)
+	pids, err := ListeningOn(context.Background(), ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +48,7 @@ func TestNothingListeningIsNoError(t *testing.T) {
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
 	ln.Close()
-	pids, err := ListeningOn(context.Background(), port)
+	pids, err := ListeningOn(context.Background(), net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
 		t.Fatalf("nothing listens on %d: %v", port, err)
 	}
