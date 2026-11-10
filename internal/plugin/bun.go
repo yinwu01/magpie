@@ -65,8 +65,8 @@ var bunRelease = "https://github.com/oven-sh/bun/releases/download"
 var bunMu sync.Mutex
 
 // bunPlatform is this machine as Bun's builds tell them apart: its OS, its
-// architecture, and whether it is a Linux on musl (Alpine), where Bun's
-// glibc builds can't start (#1877). A var for tests.
+// architecture, and whether it is a Linux on musl (Alpine, OpenWrt),
+// where Bun's glibc builds can't start (#1877). A var for tests.
 var bunPlatform = func() (goos, goarch string, musl bool) {
 	return runtime.GOOS, runtime.GOARCH, libc.Musl()
 }

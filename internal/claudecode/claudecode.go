@@ -105,7 +105,7 @@ func Find() string {
 const InstallHint = "or run `magpie claude-code install` to download Anthropic's own build for magpie"
 
 // Platform is the name Anthropic's manifest gives the build for goos/goarch
-// (musl: a Linux whose C library is musl, as Alpine's).
+// (musl: a Linux whose C library is musl, as Alpine's and OpenWrt's).
 func Platform(goos, goarch string, musl bool) (string, error) {
 	arch := map[string]string{"amd64": "x64", "arm64": "arm64"}[goarch]
 	if arch == "" {
