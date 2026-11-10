@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -128,8 +129,11 @@ func TestUpdateSpeedFallsWhenStalled(t *testing.T) {
 
 // The update's check is bounded (checkWait), its download isn't: one
 // still moving past that bound finishes (#5572, an 83 MB download under
-// ~140 KB/s failed at 10 minutes part way). Here the bound is 200ms and
-// the bytes take ~600ms.
+// ~140 KB/s failed at 10 minutes part way). Here the bound is 2s, room
+// for the check on a loaded machine (200ms wasn't, #5905), and the
+// download holds its second half until the bound has passed since the
+// feed was asked, so it outlasts the bound however long the check took.
+// That hold, under 2s, is far under update's stallAfter (30s).
 func TestUpdateSlowDownloadOutlastsTheCheckBound(t *testing.T) {
 	h := t.TempDir()
 	t.Setenv("HOME", h)
@@ -137,7 +141,8 @@ func TestUpdateSlowDownloadOutlastsTheCheckBound(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(h, ".config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(h, ".cache"))
 	old := checkWait
-	checkWait = 200 * time.Millisecond
+	const bound = 2 * time.Second
+	checkWait = bound
 	t.Cleanup(func() { checkWait = old })
 
 	const chunk, chunks = 4 << 10, 10
@@ -146,9 +151,14 @@ func TestUpdateSlowDownloadOutlastsTheCheckBound(t *testing.T) {
 		body[i] = byte(i * 5)
 	}
 	sum := sha256.Sum256(body)
+	var asked atomic.Pointer[time.Time] // when the feed was first asked, after the check's bound began
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/asset" {
 			for i := 0; i < chunks; i++ {
+				if i == chunks/2 {
+					// the check's bound is over before the rest comes
+					time.Sleep(time.Until(asked.Load().Add(bound)))
+				}
 				if _, err := w.Write(body[i*chunk : (i+1)*chunk]); err != nil {
 					return
 				}
@@ -157,6 +167,8 @@ func TestUpdateSlowDownloadOutlastsTheCheckBound(t *testing.T) {
 			}
 			return
 		}
+		now := time.Now()
+		asked.CompareAndSwap(nil, &now)
 		json.NewEncoder(w).Encode(update.Release{Version: "0.1.11", Assets: map[string]update.Asset{
 			update.BinaryAsset(): {URL: "http://" + r.Host + "/asset", Size: int64(len(body)), SHA256: hex.EncodeToString(sum[:])},
 		}})
