@@ -147,7 +147,7 @@ func TestOpenCodeProjectIs225s(t *testing.T) {
 	root, _ = filepath.EvalSymlinks(root)
 	repo := func(name, config string) string {
 		d := filepath.Join(root, name)
-		os.MkdirAll(filepath.Join(d, ".git"), 0o755)
+		gitInit(t, filepath.Join(d, ".git"))
 		os.MkdirAll(filepath.Join(d, "src", "deep"), 0o755)
 		os.WriteFile(filepath.Join(d, ".git", "config"), []byte(config), 0o644)
 		return d
@@ -164,6 +164,7 @@ func TestOpenCodeProjectIs225s(t *testing.T) {
 	os.MkdirAll(wt, 0o755)
 	own := filepath.Join(scp, ".git", "worktrees", "wt")
 	os.MkdirAll(own, 0o755)
+	os.WriteFile(filepath.Join(own, "HEAD"), []byte("ref: refs/heads/wt\n"), 0o644)
 	os.WriteFile(filepath.Join(own, "commondir"), []byte("../..\n"), 0o644)
 	os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: "+own+"\n"), 0o644)
 	for dir, want := range map[string]string{
@@ -216,13 +217,104 @@ func TestOpenCodeEnvironmentIs225s(t *testing.T) {
 	// in a repository's subfolder: the root is the workspace
 	repo := filepath.Join(t.TempDir(), "repo")
 	sub := filepath.Join(repo, "pkg")
-	os.MkdirAll(filepath.Join(repo, ".git"), 0o755)
+	gitInit(t, filepath.Join(repo, ".git"))
 	os.MkdirAll(sub, 0o755)
 	repo, _ = filepath.EvalSymlinks(repo)
 	sub, _ = filepath.EvalSymlinks(sub)
 	got := OpenCodeEnvironment(sub)
 	if !strings.Contains(got, "  Working directory: "+sub+"\n  Workspace root folder: "+repo+"\n  Is directory a git repo: yes\n") {
 		t.Fatalf("in a repository:\n%s", got)
+	}
+}
+
+// gitInit lays out at dotGit what git looks for in a repository's .git
+// (GitAt), as git init does: a HEAD, objects and refs.
+func gitInit(t *testing.T, dotGit string) {
+	t.Helper()
+	for _, d := range []string{"objects", "refs/heads"} {
+		if err := os.MkdirAll(filepath.Join(dotGit, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dotGit, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// OpenCode 2.2.5 finds a folder's repository with git rev-parse
+// (Project.resolve, Git.repo.discover), so a .git git doesn't take is no
+// repository to it: an empty one is passed over, to the repository above
+// it if there is one, and the project and environment block are the
+// folder's own. An empty /tmp/.git made every temp folder the repository
+// at /tmp (#5239). Each kind of .git gitFixtures lays out is a repository
+// to OpenCode when git finds one there.
+func TestOpenCodeRepositoryIsWhatGitFinds(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	plain := filepath.Join(root, "plain", "work")
+	os.MkdirAll(plain, 0o755)
+	os.MkdirAll(filepath.Join(root, "plain", ".git"), 0o755)
+	repo := filepath.Join(root, "repo")
+	gitInit(t, filepath.Join(repo, ".git"))
+	os.WriteFile(filepath.Join(repo, ".git", "config"), []byte("[remote \"origin\"]\n\turl = git@github.com:Foo/Bar.git\n"), 0o644)
+	inner := filepath.Join(repo, "inner", "work")
+	os.MkdirAll(inner, 0o755)
+	os.MkdirAll(filepath.Join(repo, "inner", ".git"), 0o755)
+	for _, c := range []struct{ dir, id, workspace, git string }{
+		{plain, "directory:" + plain, plain, "no"},
+		{inner, "git-remote:github.com/Foo/Bar", repo, "yes"},
+	} {
+		if got := OpenCodeProject(c.dir); got != sha1Hex(c.id) {
+			t.Errorf("%s: project %s, want sha1(%q)", c.dir, got, c.id)
+		}
+		if got, want := OpenCodeEnvironment(c.dir), "  Workspace root folder: "+c.workspace+"\n  Is directory a git repo: "+c.git+"\n"; !strings.Contains(got, want) {
+			t.Errorf("%s: environment\n%s\nwant it to say\n%s", c.dir, got, want)
+		}
+	}
+	for _, c := range gitFixtures(t, filepath.Join(root, "kinds")) {
+		if _, _, ok := openCodeRepository(c.dir); ok != (c.want == "yes") {
+			t.Errorf("%s: a repository %v, git says %s", c.name, ok, c.want)
+		}
+	}
+}
+
+// A .git OpenCode's git can't read: git rev-parse passes a .git folder
+// it can't open over and finds the repository above it, and fails at a
+// .git file it can't read (git 2.34), where OpenCode names the folder by
+// itself.
+func TestOpenCodeRepositoryUnreadIsGits(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a folder isn't locked by its mode")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a folder whatever its mode")
+	}
+	repo, _ := filepath.EvalSymlinks(t.TempDir())
+	gitInit(t, filepath.Join(repo, ".git"))
+	os.WriteFile(filepath.Join(repo, ".git", "config"), []byte("[remote \"origin\"]\n\turl = git@github.com:Foo/Bar.git\n"), 0o644)
+	os.MkdirAll(filepath.Join(repo, "folder", ".git"), 0o755)
+	os.MkdirAll(filepath.Join(repo, "file"), 0o755)
+	os.WriteFile(filepath.Join(repo, "file", ".git"), []byte("gitdir: "+filepath.Join(repo, ".git")+"\n"), 0o644)
+	for _, c := range []struct{ name, id string }{
+		{"folder", "git-remote:github.com/Foo/Bar"},
+		{"file", "directory:" + filepath.Join(repo, "file", "sub")},
+	} {
+		dir := filepath.Join(repo, c.name, "sub")
+		os.MkdirAll(dir, 0o755)
+		locked := filepath.Join(repo, c.name, ".git")
+		fi, err := os.Stat(locked)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(locked, 0); err != nil {
+			t.Fatal(err)
+		}
+		got := OpenCodeProject(dir)
+		if err := os.Chmod(locked, fi.Mode().Perm()); err != nil {
+			t.Fatal(err)
+		}
+		if got != sha1Hex(c.id) {
+			t.Errorf("under a .git %s it can't read: %s, want sha1(%q)", c.name, got, c.id)
+		}
 	}
 }
 

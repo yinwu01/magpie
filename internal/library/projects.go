@@ -214,12 +214,17 @@ func (l *Library) syncFolder(p *Project, res *Result, hubs map[string]*Server) {
 // in each other worktree, out of git: in the repository's info/exclude,
 // never in a file of the project's (project_git.go). The lines an older
 // magpie wrote in the project's .gitignore come out of it, and a
-// .gitignore it made goes; a folder outside git gets nothing.
+// .gitignore it made goes; a folder outside git gets nothing. A .git on
+// the way that can't be read is an error: magpie can't tell whether the
+// folder is in a repository.
 func (p *Project) keepOutOfGit() error {
 	if err := p.writeIgnore(); err != nil {
 		return fmt.Errorf(".gitignore: %w", err)
 	}
-	g, ok := gitOf(p.Dir)
+	g, ok, err := gitOf(p.Dir)
+	if err != nil {
+		return err
+	}
 	if !ok {
 		return nil
 	}

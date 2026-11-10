@@ -63,10 +63,16 @@ func tool(body string) string {
 	return m.Params.Name
 }
 
-// gitRepo makes a checkout at dir whose origin is remote.
+// gitRepo makes a checkout at dir whose origin is remote, with what git
+// looks for in its .git (provider.GitAt) as git init lays it out.
 func gitRepo(t *testing.T, dir, remote string) string {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+	for _, d := range []string{"objects", "refs/heads"} {
+		if err := os.MkdirAll(filepath.Join(dir, ".git", d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cfg := "[core]\n\tbare = false\n[remote \"origin\"]\n\turl = " + remote + "\n"

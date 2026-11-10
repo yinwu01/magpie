@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/yetone/magpie/internal/edit"
+	"github.com/yetone/magpie/internal/provider"
 )
 
 // A project in a git repository keeps what magpie places in it out of git
@@ -27,11 +28,41 @@ type gitWhere struct {
 	Top, Common string
 }
 
-// gitOf is the repository dir is in, by the nearest .git above it: a
-// folder (the main worktree's), or a file naming the worktree's own
-// folder under the main .git (git worktree add), whose commondir names
-// the shared one. ok is false outside a repository.
-func gitOf(dir string) (gitWhere, bool) {
+// gitOf is the repository dir is in, as git finds it (provider.GitAt at
+// each .git going up): a folder (the main worktree's), or a file naming
+// the worktree's own folder under the main .git (git worktree add), whose
+// commondir names the shared one. A .git git doesn't take for a
+// repository, an empty folder say, is passed over as git passes it over;
+// ok is false outside a repository and at a .git file that names none,
+// where git stops. err is a .git on the way that couldn't be read:
+// whether dir is in a repository is unknown then, and nothing is written.
+func gitOf(dir string) (gitWhere, bool, error) {
+	for d := dir; ; {
+		git, common, err := provider.GitAt(filepath.Join(d, ".git"))
+		switch {
+		case err != nil:
+			return gitWhere{}, false, err
+		case git == "no":
+			return gitWhere{}, false, nil
+		case git == "yes":
+			return gitWhere{Top: d, Common: common}, true, nil
+		}
+		up := filepath.Dir(d)
+		if up == d {
+			return gitWhere{}, false, nil
+		}
+		d = up
+	}
+}
+
+// claudeGitOf is the repository dir is in as Claude Code takes it for
+// the key it keeps a project under (claudeRoot): its findGitRoot (2.1.322)
+// stops at the nearest .git folder or file, an empty one too, which git
+// itself passes over (gitOf); a file naming the worktree's own folder
+// under the main .git (git worktree add) has its commondir name the
+// shared one. A .git file with no gitdir line is passed over here, where
+// Claude Code stops; not changed.
+func claudeGitOf(dir string) (gitWhere, bool) {
 	for d := dir; ; {
 		g := filepath.Join(d, ".git")
 		if fi, err := os.Stat(g); err == nil {
@@ -118,7 +149,7 @@ func (g gitWhere) tops() []string {
 // treeDirs are the project's folder in each other worktree of its
 // repository that has it: the same folder under each worktree's top.
 func (p *Project) treeDirs() []string {
-	g, ok := gitOf(p.Dir)
+	g, ok, _ := gitOf(p.Dir)
 	if !ok {
 		return nil
 	}
