@@ -1585,9 +1585,17 @@ func untagged(b string) (string, bool) {
 // dot or dash ("kimi-k3.1-pro", "kimi-k3-1-pro"), case and gaps, and a
 // snapshot date (Ark's six digits, "-261024"; "-20260801") don't keep
 // them apart, while a variant does (-pro-max is not -pro, -mini not the
-// model, k3.1 not k3). False for an id it knows as given, or none.
+// model, k3.1 not k3). And last OpenAI's dashed date (undated), which
+// SameModel keeps: a relay's gpt-6.1-sol-2026-09-29 has gpt-6.1-sol's
+// window (#5643), while a snapshot listed as given, or under another
+// spelling, keeps its own (gpt-4o-2024-05-13's reply limit is 4096,
+// gpt-4o's 16384). False for an id it knows as given, or none.
 func normalFor(b string) (string, bool) {
-	n, ok := normal[SameModel(b)]
+	k := SameModel(b)
+	n, ok := normal[k]
+	if u, dated := undated(k); !ok && dated {
+		n, ok = normal[u]
+	}
 	if !ok || n == b {
 		return "", false
 	}

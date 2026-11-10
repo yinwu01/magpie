@@ -47,6 +47,7 @@ func TestCodexCatalogRelaysKnownModelsLevels(t *testing.T) {
 	var got struct {
 		Models []struct {
 			Slug   string `json:"slug"`
+			Window int    `json:"context_window"`
 			Levels []struct {
 				Effort string `json:"effort"`
 			} `json:"supported_reasoning_levels"`
@@ -67,6 +68,15 @@ func TestCodexCatalogRelaysKnownModelsLevels(t *testing.T) {
 		"relay/gpt-6-luna-2026-09-22": {"none", "low", "medium", "high", "xhigh", "max"},
 		"relay/glm-5.3-flash":         {"low", "high", "max"},
 		"relay/model-x-2026-01-01":    {"low", "medium", "high"},
+	}
+	// and the dated id has the model's window, which models.dev gives
+	// gpt-6.1-sol alone (#5643)
+	windows := map[string]int{}
+	for _, m := range got.Models {
+		windows[m.Slug] = m.Window
+	}
+	if w := windows["relay/gpt-6.1-sol"]; w == 0 || windows["relay/gpt-6.1-sol-2026-09-29"] != w {
+		t.Errorf("context_window: gpt-6.1-sol %d, gpt-6.1-sol-2026-09-29 %d", w, windows["relay/gpt-6.1-sol-2026-09-29"])
 	}
 	seen := map[string]bool{}
 	for _, m := range got.Models {

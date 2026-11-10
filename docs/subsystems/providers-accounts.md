@@ -236,6 +236,14 @@ another spelling (`catalog.SameModel`, the rule routing groups use): Ark's
 `ListedBy` try another spelling last, only when no spelling matches as
 given (`normalFor`, the spelling most entries list: Ark's
 `kimi-k3-1-pro-261024` reads as `kimi-k3.1-pro`; `TestOtherSpellingLimits`).
+`normalFor` last drops OpenAI's dashed snapshot date, which `SameModel`
+keeps for routing groups, so `ContextOf`, `OutputOf`, `EffortsOf`,
+`Thinks`, `SeesImages` and `IsOneOf` read a relay's
+`gpt-6.1-sol-2026-09-29` as `gpt-6.1-sol` (#5643,
+`TestDashedSnapshotDateLimits`). Only a real day from 2000 on counts
+(`undated`), and a snapshot models.dev lists, as given or under another
+spelling, keeps its own (`gpt-4o-2024-05-13`'s 4096 reply limit).
+`ListedBy`, `Decorate` and `Spelling` don't drop it.
 The id stays the upstream's, and its name isn't borrowed. A price never is:
 `PricedBy` matches only as before (`TestOtherSpellingIsNotPriced`). The
 usage report sends a model id only when models.dev knows it as written

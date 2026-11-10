@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/yetone/magpie/internal/lazyre"
@@ -68,6 +69,23 @@ func snapshotDate(s string) bool {
 		return yy >= 23 && yy <= 39 && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31
 	}
 	return false
+}
+
+// undated is a SameModel name without OpenAI's dashed snapshot date, and
+// whether it had one: gpt-6-1-sol-2026-09-29 is gpt-6-1-sol. Only a day
+// that is one, from 2000 on, counts: -2026-13-01, -2026-02-31, -2026-09
+// and -09-2025 are no date. SameModel keeps this date (a pinned snapshot
+// whose group agents may name); the catalog's lookups drop it last
+// (normalFor), so a snapshot it doesn't list has its model's window.
+func undated(k string) (string, bool) {
+	const n = len("-2006-01-02")
+	if len(k) <= n || k[len(k)-n] != '-' || !strings.HasPrefix(k[len(k)-n+1:], "20") {
+		return "", false
+	}
+	if _, err := time.Parse("2006-01-02", k[len(k)-n+1:]); err != nil {
+		return "", false
+	}
+	return k[:len(k)-n], true
 }
 
 // modelGaps are what SameModel spells as one "-": a run of spaces (a
