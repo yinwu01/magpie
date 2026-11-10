@@ -65,6 +65,8 @@ func slowFile(b []byte, gap time.Duration, stallAfter int) http.HandlerFunc {
 
 // urlGateway answers every images request with the URLs, whatever
 // response_format asked (#1576's relay ignores it), and keeps the bodies.
+// The image MCP server's own asks, a tool call's report among them, are
+// no images request: a report can come before the job's request (#5964).
 type urlGateway struct {
 	mu   sync.Mutex
 	urls []string
@@ -74,6 +76,10 @@ type urlGateway struct {
 func (g *urlGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var b bytes.Buffer
 	b.ReadFrom(r.Body)
+	if r.URL.Path == gateway.ImageMCPPath {
+		http.NotFound(w, r)
+		return
+	}
 	g.mu.Lock()
 	g.body = append(g.body, b.String())
 	g.mu.Unlock()
@@ -162,8 +168,10 @@ func TestFourKImageByURLIsSaved(t *testing.T) {
 	if b, _ := os.ReadFile(saved); !bytes.Equal(b, big) {
 		t.Fatalf("saved %d bytes of %d", len(b), len(big))
 	}
-	if !strings.Contains(g.body[0], `"response_format":"b64_json"`) {
-		t.Fatalf("the gateway was asked %s", g.body[0])
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if len(g.body) != 1 || !strings.Contains(g.body[0], `"response_format":"b64_json"`) {
+		t.Fatalf("the gateway was asked %q", g.body)
 	}
 }
 
