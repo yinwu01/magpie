@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -21,7 +22,7 @@ func TestListeningOn(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	pids, err := ListeningOn(context.Background(), ln.Addr().(*net.TCPAddr).Port)
+	pids, err := ListeningOn(context.Background(), ln.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +49,7 @@ func TestNothingListeningIsNoError(t *testing.T) {
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
 	ln.Close()
-	pids, err := ListeningOn(context.Background(), port)
+	pids, err := ListeningOn(context.Background(), net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
 		t.Fatalf("nothing listens on %d: %v", port, err)
 	}
@@ -74,19 +75,20 @@ func TestLsofCutShortIsNoAnswer(t *testing.T) {
 		t.Skip("sh and sleep stand in for lsof")
 	}
 	ask := func(ctx context.Context, name string, args ...string) ([]int, error) {
-		return lsofListeners(CommandContext(ctx, name, args...).Output())
+		ls, err := lsofListeners(CommandContext(ctx, name, args...).Output())
+		return holders(ls, ""), err
 	}
 	bg := context.Background()
 	if ps, err := ask(bg, "sh", "-c", "exit 1"); err != nil || len(ps) != 0 {
 		t.Errorf("none found: %v %v", ps, err)
 	}
-	if ps, err := ask(bg, "sh", "-c", "echo 12; echo 34; echo 12"); err != nil || !slices.Equal(ps, []int{12, 34}) {
+	if ps, err := ask(bg, "sh", "-c", "printf 'p12\\nf3\\ntIPv4\\nn*:1\\np34\\nf4\\ntIPv4\\nn*:1\\np12\\nf5\\ntIPv6\\nn*:1\\n'"); err != nil || !slices.Equal(ps, []int{12, 34}) {
 		t.Errorf("two found: %v %v", ps, err)
 	}
 	if ps, err := ask(bg, "sh", "-c", "exit 2"); err == nil {
 		t.Errorf("lsof's error read as %v", ps)
 	}
-	if ps, err := ask(bg, "sh", "-c", "echo 12; exit 1"); err == nil {
+	if ps, err := ask(bg, "sh", "-c", "echo p12; echo n*:1; exit 1"); err == nil {
 		t.Errorf("ids written beside a failure read as %v", ps)
 	}
 	short, cancel := context.WithTimeout(bg, 100*time.Millisecond)
