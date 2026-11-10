@@ -1,6 +1,9 @@
 package memory
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +41,110 @@ func TestDigestChangesOnlyWhenPublished(t *testing.T) {
 	}
 	if changed, _ := Publish(); changed {
 		t.Fatal("an unchanged publish said it changed")
+	}
+}
+
+// A digest read after memory's own write has the write, even when the
+// file kept its size and modification time, as two writes within one tick
+// of a coarse file system clock leave it (#5999).
+func TestDigestReadsMemorysOwnWriteWithinATick(t *testing.T) {
+	fresh(t)
+	m := save(t, "Answer in Chinese", Preference, Global)
+	if _, err := Publish(); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := Digest("codex"); !strings.Contains(d, "- Answer in Chinese") {
+		t.Fatalf("digest %q", d)
+	}
+	before, err := os.Stat(Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Edit(m.ID, Input{Text: str("Answer in English")}, false); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := Publish(); err != nil || !changed {
+		t.Fatalf("publish: %v, %v", changed, err)
+	}
+	sameTick(t, Path(), before)
+	if d, _ := Digest("codex"); !strings.Contains(d, "- Answer in English") {
+		t.Fatalf("digest after the edit was published %q", d)
+	}
+}
+
+// Another magpie's write within the same tick is seen, even one that
+// left the file's size as it was.
+func TestDigestReadsAnotherMagpiesWriteWithinATick(t *testing.T) {
+	fresh(t)
+	save(t, "Answer in Chinese", Preference, Global)
+	if _, err := Publish(); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := Digest("codex"); !strings.Contains(d, "- Answer in Chinese") {
+		t.Fatalf("digest %q", d)
+	}
+	before, err := os.Stat(Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(Path(), bytes.ReplaceAll(b, []byte("Chinese"), []byte("English")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sameTick(t, Path(), before)
+	if d, _ := Digest("codex"); !strings.Contains(d, "- Answer in English") {
+		t.Fatalf("digest after another magpie's write %q", d)
+	}
+}
+
+// The digest is of the memory.json at Path, not one read before from
+// another path with the same size and modification time.
+func TestDigestIsOfTheFileAtPath(t *testing.T) {
+	fresh(t)
+	save(t, "Answer in Chinese", Preference, Global)
+	if _, err := Publish(); err != nil {
+		t.Fatal(err)
+	}
+	a := Path()
+	st, err := os.Stat(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(t.TempDir(), "memory.json")
+	if err := os.WriteFile(other, bytes.ReplaceAll(b, []byte("Chinese"), []byte("English")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sameTick(t, other, st)
+	if d, _ := Digest("codex"); !strings.Contains(d, "- Answer in Chinese") {
+		t.Fatalf("digest %q", d)
+	}
+	Path = func() string { return other }
+	if d, _ := Digest("codex"); !strings.Contains(d, "- Answer in English") {
+		t.Fatalf("digest of the other file %q", d)
+	}
+}
+
+// sameTick gives the file at p the modification time of before, after
+// checking it has before's size: what two writes of the same size within
+// one tick of the file system's clock leave.
+func sameTick(t *testing.T, p string, before os.FileInfo) {
+	t.Helper()
+	st, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Size() != before.Size() {
+		t.Fatalf("%s has %d bytes, %d before: the test needs the same size", p, st.Size(), before.Size())
+	}
+	if err := os.Chtimes(p, before.ModTime(), before.ModTime()); err != nil {
+		t.Fatal(err)
 	}
 }
 

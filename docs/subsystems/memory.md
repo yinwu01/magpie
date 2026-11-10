@@ -79,6 +79,17 @@ the prompt cache built on them — change mid-session only then
   (`PublishMemory(true)` → `memory.PublishDue`, which writes nothing while
   memory has never held anything).
 
+`Digest` reads memory.json through `filememo` (`cached`): read again when
+the file's size or modification time changed, and, while that time is
+under two seconds old, when its bytes changed. A digest read after a
+publish has it even when the write left the file's size and time as they
+were, as two writes within one tick of a coarse file system clock do,
+whether memory wrote it here or another magpie did
+(`TestDigestReadsMemorysOwnWriteWithinATick`,
+`TestDigestReadsAnotherMagpiesWriteWithinATick`, #5999). What is kept is
+kept by path, so a different `Path` is read afresh
+(`TestDigestIsOfTheFileAtPath`).
+
 `Library.memoryDigest` adds the agent's digest (global, its own, and each
 project's under the folders it was seen in) to the instructions of the
 agents ticked under Instructions, unless `Instructions.NoMemory`

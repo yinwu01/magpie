@@ -24,13 +24,13 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
 	"github.com/yetone/magpie/internal/appdir"
 	"github.com/yetone/magpie/internal/edit"
 	"github.com/yetone/magpie/internal/filelock"
+	"github.com/yetone/magpie/internal/filememo"
 	"github.com/yetone/magpie/internal/lastgood"
 )
 
@@ -162,14 +162,19 @@ var ErrNotFound = errors.New("no memory with that id")
 // read reads memory.json: empty when it isn't there, an error when it is
 // and can't be read.
 func read() (*file, error) {
-	f := &file{Version: 1}
 	b, err := lastgood.Read(Path(), lastgood.Into[file])
 	if errors.Is(err, fs.ErrNotExist) {
-		return f, nil
+		return &file{Version: 1}, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	return parse(b)
+}
+
+// parse is memory.json's bytes as read.
+func parse(b []byte) (*file, error) {
+	f := &file{Version: 1}
 	if err := json.Unmarshal(b, f); err != nil {
 		return nil, err
 	}
@@ -591,31 +596,25 @@ func Modified() time.Time {
 	return st.ModTime()
 }
 
-// cache is memory.json as cached() last read it, and its modification time.
-var cache struct {
-	sync.Mutex
-	at time.Time
-	f  *file
-}
-
-// cached is memory.json as last read, read again when it changed: for the
-// digest, which a library sync reads for every agent.
+// cached is memory.json as filememo keeps it, for the digest, which a
+// library sync reads for every agent: read again when the file at Path
+// changed size or time, and, while its time is recent, when its bytes
+// changed, since two writes within one tick of a coarse clock (4ms on
+// Linux at CONFIG_HZ=250) leave the same time (#5999). What it returns is
+// shared: the caller must not change it.
 func cached() (*file, error) {
-	cache.Lock()
-	defer cache.Unlock()
-	st, err := os.Stat(Path())
+	p := Path()
+	f, err := filememo.ReadNow("memory", p, func(b []byte) (*file, error) {
+		if !lastgood.Into[file](b) {
+			var err error
+			if b, err = lastgood.Fallback(p, b, lastgood.Into[file]); err != nil {
+				return nil, err
+			}
+		}
+		return parse(b)
+	})
 	if errors.Is(err, fs.ErrNotExist) {
 		return &file{Version: 1}, nil
 	}
-	if err == nil && cache.f != nil && st.ModTime().Equal(cache.at) {
-		return cache.f, nil
-	}
-	f, err := read()
-	if err != nil {
-		return nil, err
-	}
-	if st != nil {
-		cache.at, cache.f = st.ModTime(), f
-	}
-	return f, nil
+	return f, err
 }
