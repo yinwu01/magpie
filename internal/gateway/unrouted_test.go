@@ -105,6 +105,53 @@ func heldPast(t *testing.T, u *unroutedHold, d time.Duration, got chan unroutedR
 	return nil
 }
 
+// firedInWait waits until u's unknownLimit timer has fired while its
+// request was in a known wait, so the wait outlasted the limit, and
+// answers nil then; or answers its reply, if it is answered first.
+func firedInWait(t *testing.T, u *unroutedHold, got chan unroutedReply) *unroutedReply {
+	t.Helper()
+	return firedWhile(t, u, got, func(u *unroutedHold) bool { return u.due }, "the unknown limit never fired in a known wait")
+}
+
+// mostFiredInMasking is firedInWait for unroutedMost's timer and the
+// request's masking.
+func mostFiredInMasking(t *testing.T, u *unroutedHold, got chan unroutedReply) *unroutedReply {
+	t.Helper()
+	return firedWhile(t, u, got, func(u *unroutedHold) bool { return u.mdue }, "unroutedMost never fired while masking")
+}
+
+// firedWhile waits until fired (read under u.wmu) says u's timer fired
+// in its wait, or answers the request's reply if it comes first.
+// Waiting on the timer, not on a multiple of the limit, lets the limit
+// be long enough for magpie's own work outside its known waits (under
+// 7ms in 300 runs on a loaded Linux machine; past 100ms once in a full
+// suite, #5953) and still be passed.
+func firedWhile(t *testing.T, u *unroutedHold, got chan unroutedReply, fired func(*unroutedHold) bool, never string) *unroutedReply {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		u.wmu.Lock()
+		done := fired(u)
+		u.wmu.Unlock()
+		if done {
+			return nil
+		}
+		select {
+		case r := <-got:
+			return &r
+		case <-time.After(5 * time.Millisecond):
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s (held in known waits for %s)", never, u.excusedFor())
+		}
+	}
+}
+
+// notCutOffLimit is unknownLimit, or unroutedMost, for the tests whose
+// request outlasts it in a wait that doesn't count: room for magpie's
+// own work, which does.
+const notCutOffLimit = time.Second
+
 // posted posts body to srv in the background, its reply to the channel.
 func posted(srv *httptest.Server, body io.Reader) chan unroutedReply {
 	got := make(chan unroutedReply, 1)
@@ -185,7 +232,7 @@ func heldSaved(t *testing.T, s *Server) {
 // answered, not cut off.
 func TestUnroutedSlowBodyNotCutOff(t *testing.T) {
 	unroutedLimits(t, 20*time.Millisecond, time.Hour)
-	unknownLimit(t, 100*time.Millisecond)
+	unknownLimit(t, notCutOffLimit)
 	s, _ := slowEyed(t, 0)
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
@@ -196,7 +243,7 @@ func TestUnroutedSlowBodyNotCutOff(t *testing.T) {
 	if _, err := pw.Write([]byte(unroutedHi[:half])); err != nil {
 		t.Fatal(err)
 	}
-	if r := heldPast(t, watchedHold(t, s), 3*unroutedUnknown, got); r != nil {
+	if r := firedInWait(t, watchedHold(t, s), got); r != nil {
 		t.Fatalf("answered %d %q %v while its body was still arriving", r.code, r.body, r.err)
 	}
 	if _, err := pw.Write([]byte(unroutedHi[half:])); err != nil {
@@ -239,7 +286,7 @@ func (m gatedMasker) Text(s string) (string, int)            { return s, 0 }
 // for longer than unroutedUnknown is routed once masked, not cut off.
 func TestUnroutedMaskingNotCutOff(t *testing.T) {
 	unroutedLimits(t, 20*time.Millisecond, time.Hour)
-	unknownLimit(t, 100*time.Millisecond)
+	unknownLimit(t, notCutOffLimit)
 	s, _ := slowEyed(t, 0)
 	if err := settings.Save(settings.Settings{Redact: true}); err != nil {
 		t.Fatal(err)
@@ -254,7 +301,7 @@ func TestUnroutedMaskingNotCutOff(t *testing.T) {
 	t.Cleanup(srv.Close)
 	got := posted(srv, strings.NewReader(unroutedHi))
 	u := watchedHold(t, s)
-	if r := heldPast(t, u, 3*unroutedUnknown, got); r != nil {
+	if r := firedInWait(t, u, got); r != nil {
 		t.Fatalf("answered %d %q %v while it was masked", r.code, r.body, r.err)
 	}
 	if u.masking.Load() == 0 {
@@ -271,7 +318,7 @@ func TestUnroutedMaskingNotCutOff(t *testing.T) {
 // unroutedUnknown is not cut off: the queue is a known wait.
 func TestUnroutedSlotWaitNotCutOff(t *testing.T) {
 	unroutedLimits(t, 20*time.Millisecond, time.Hour)
-	unknownLimit(t, 100*time.Millisecond)
+	unknownLimit(t, notCutOffLimit)
 	s, up := slowEyed(t, 0)
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
@@ -280,7 +327,11 @@ func TestUnroutedSlotWaitNotCutOff(t *testing.T) {
 		code, _, _ := postWhole(srv, strings.NewReader(`{"model":"probe/text","messages":[{"role":"user","content":"hold"}]}`))
 		codes <- code
 	}()
-	<-up.held // the one slot is taken
+	select {
+	case <-up.held: // the one slot is taken
+	case <-time.After(20 * time.Second):
+		t.Fatal("the first request never took the slot")
+	}
 	go func() {
 		code, _, _ := postWhole(srv, strings.NewReader(unroutedHi))
 		codes <- code
@@ -290,9 +341,16 @@ func TestUnroutedSlotWaitNotCutOff(t *testing.T) {
 		queued := false
 		s.active.mu.Lock()
 		for _, f := range s.active.m {
-			if p, _ := f.phase.Load().(string); p == "slot" && time.Since(f.start) > 3*unroutedUnknown {
-				queued = true
+			f.mu.Lock()
+			u := f.unrouted
+			f.mu.Unlock()
+			if p, _ := f.phase.Load().(string); p != "slot" || u == nil {
+				continue
 			}
+			// the limit fired while it waited there
+			u.wmu.Lock()
+			queued = queued || u.due
+			u.wmu.Unlock()
 		}
 		s.active.mu.Unlock()
 		if queued {
@@ -480,11 +538,11 @@ func TestUnroutedQuickRequestLeavesNoTrace(t *testing.T) {
 }
 
 // #3682: masking's time counts toward unroutedMost no more, while what
-// comes after it still does. A request masked for well past unroutedMost
+// comes after it still does. A request masked past unroutedMost
 // isn't answered; then held by an image's description that never ends,
 // it is answered 504 once that wait has had unroutedMost.
 func TestUnroutedMostLeavesOutMasking(t *testing.T) {
-	unroutedLimits(t, 20*time.Millisecond, 300*time.Millisecond)
+	unroutedLimits(t, 20*time.Millisecond, notCutOffLimit)
 	s, _ := slowEyed(t, 0)
 	heldSight(t, s)
 	if err := settings.Save(settings.Settings{Redact: true}); err != nil {
@@ -500,7 +558,7 @@ func TestUnroutedMostLeavesOutMasking(t *testing.T) {
 	t.Cleanup(srv.Close)
 	got := posted(srv, strings.NewReader(pastedImage))
 	u := watchedHold(t, s)
-	if r := heldPast(t, u, 3*unroutedMost, got); r != nil {
+	if r := mostFiredInMasking(t, u, got); r != nil {
 		t.Fatalf("answered %d %q %v while it was masked", r.code, r.body, r.err)
 	}
 	if u.masking.Load() == 0 {

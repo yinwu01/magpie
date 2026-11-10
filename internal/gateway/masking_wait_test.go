@@ -63,7 +63,7 @@ func (waitingMasker) Writer(w http.ResponseWriter) (http.ResponseWriter, func())
 // and its wait lets go when its client does, rather than keep its place
 // in the model's queue.
 func TestMaskingModelWaitNotCutOffAtMost(t *testing.T) {
-	unroutedLimits(t, 20*time.Millisecond, 200*time.Millisecond)
+	unroutedLimits(t, 20*time.Millisecond, notCutOffLimit)
 	fresh(t)
 	if err := settings.Save(settings.Settings{Redact: true}); err != nil {
 		t.Fatal(err)
@@ -99,7 +99,7 @@ func TestMaskingModelWaitNotCutOffAtMost(t *testing.T) {
 		got <- unroutedReply{code: resp.StatusCode, body: string(b)}
 	}()
 	u := watchedHold(t, s)
-	if r := heldPast(t, u, 5*unroutedMost, got); r != nil {
+	if r := mostFiredInMasking(t, u, got); r != nil {
 		t.Fatalf("a request waiting for the masking model was answered %d %q %v past unroutedMost", r.code, r.body, r.err)
 	}
 	if u.masking.Load() == 0 {
