@@ -9,6 +9,6 @@ import (
 
 var errUnsupported = errors.New("not supported on this system")
 
-func listeningOn(context.Context, int) ([]int, error) { return nil, errUnsupported }
+func listeningOn(context.Context, string, int) ([]int, error) { return nil, errUnsupported }
 
 func executable(int) (string, error) { return "", errUnsupported }

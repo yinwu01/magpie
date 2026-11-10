@@ -33,17 +33,16 @@ var portFree = func(addr string) error {
 	return ln.Close()
 }
 
-// magpieOnPort says whether a magpie program of this user's listens on
-// port, whatever answers there: then it is this computer's, whose port is
-// set there. Not when the program listening is another one, answering for
-// a magpie inside a container (OrbStack Helper, docker-proxy) or not
-// answering as magpie at all, or one this user can't see. The error is
-// the processes not listed, which says neither.
-func magpieOnPort(port string) (bool, error) {
-	n, _ := strconv.Atoi(port)
+// magpieOnPort says whether a magpie program of this user's listens at
+// addr (gatewayAt), whatever answers there: then it is this computer's,
+// whose port is set there. Not when the program listening is another one,
+// answering for a magpie inside a container (OrbStack Helper,
+// docker-proxy) or not answering as magpie at all, or one this user can't
+// see. The error is the processes not listed, which says neither.
+func magpieOnPort(addr string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	pids, err := listeningOn(ctx, n)
+	pids, err := listeningOn(ctx, addr)
 	if err != nil {
 		return false, err
 	}
@@ -115,7 +114,7 @@ func setPort(p int) (portJSON, error) {
 	// port could move past it (#5180). When the processes can't be
 	// listed, what answers there says, given longer than ServedBy.
 	if gw == nil && gateway.Taken() {
-		mine, err := magpieOnPort(gateway.Port())
+		mine, err := magpieOnPort(gatewayAt())
 		if err != nil {
 			mine = gateway.ServedWithin(servedWait).Running
 		}

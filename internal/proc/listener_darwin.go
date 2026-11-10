@@ -10,13 +10,18 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// listeningOn asks lsof, which lists this user's processes.
-func listeningOn(ctx context.Context, port int) ([]int, error) {
+// listeningOn asks lsof, which lists this user's processes, for each
+// listener's address too (-F ptn: -t would say the pid alone).
+func listeningOn(ctx context.Context, host string, port int) ([]int, error) {
 	lsof := "/usr/sbin/lsof"
 	if _, err := os.Stat(lsof); err != nil {
 		lsof = "lsof"
 	}
-	return lsofListeners(CommandContext(ctx, lsof, "-nP", "-a", "-iTCP:"+strconv.Itoa(port), "-sTCP:LISTEN", "-t").Output())
+	ls, err := lsofListeners(CommandContext(ctx, lsof, "-nP", "-a", "-iTCP:"+strconv.Itoa(port), "-sTCP:LISTEN", "-F", "ptn").Output())
+	if err != nil {
+		return nil, err
+	}
+	return holders(ls, host), nil
 }
 
 // executable reads kern.procargs2: the argument count, then the path the

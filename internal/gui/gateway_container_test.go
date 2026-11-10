@@ -106,7 +106,7 @@ func TestGatewayHeldByAContainer(t *testing.T) {
 	// and when the processes can't be listed (lsof cut short on a busy
 	// Mac): what answers there, given longer than ServedBy, says it
 	lookup := listeningOn
-	listeningOn = func(context.Context, int) ([]int, error) { return nil, errors.New("lsof: signal: killed") }
+	listeningOn = func(context.Context, string) ([]int, error) { return nil, errors.New("lsof: signal: killed") }
 	t.Cleanup(func() { listeningOn = lookup })
 	_, err = setPort(freePort(t))
 	listeningOn = lookup
