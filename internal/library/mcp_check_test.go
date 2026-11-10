@@ -62,6 +62,18 @@ func TestFakeMCPServer(t *testing.T) {
 		mode = "ok"
 	}
 	switch mode {
+	case "refuse":
+		// a server that turns initialize down and exits at once, its
+		// reply the last thing it writes
+		sc := bufio.NewScanner(os.Stdin)
+		sc.Scan()
+		var m struct {
+			ID json.RawMessage `json:"id"`
+		}
+		json.Unmarshal(sc.Bytes(), &m)
+		fmt.Printf(`{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"bad token"}}`+"\n", m.ID)
+		fmt.Fprintln(os.Stderr, "giving up")
+		os.Exit(4)
 	case "sleep":
 		time.Sleep(time.Minute)
 		os.Exit(0)
@@ -269,6 +281,32 @@ func TestCheckStdio(t *testing.T) {
 				}
 				t.Errorf("process %d still runs after the check", pid)
 			}
+		}
+	})
+}
+
+// A command server's reply written just before it exits is read, by the
+// check and the hub, though the read starts only after the server has
+// exited and been waited for: cmd.Wait closed a StdoutPipe under the read,
+// and the reply was lost, told as "exited" (#5652).
+func TestServerReplyReadAfterExit(t *testing.T) {
+	old := beforeServerRead
+	beforeServerRead = func(waited <-chan struct{}) { <-waited }
+	t.Cleanup(func() { beforeServerRead = old })
+	t.Run("check", func(t *testing.T) {
+		h := CheckServer(context.Background(), fakeStdio(t, "refuse", nil))
+		if h.Why != "protocol" || h.Detail != "initialize: bad token" {
+			t.Fatalf("got %+v, want initialize's error, bad token", h)
+		}
+	})
+	t.Run("hub", func(t *testing.T) {
+		hubSandbox(t)
+		c, err := dialHub(context.Background(), fakeStdio(t, "refuse", nil), func() {})
+		if err == nil {
+			c.close()
+		}
+		if err == nil || err.Error() != "initialize: bad token" {
+			t.Fatalf("got %v, want initialize's error, bad token", err)
 		}
 	})
 }

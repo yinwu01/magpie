@@ -50,6 +50,7 @@ import (
 	"github.com/yetone/magpie/internal/agent"
 	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/mcpauth"
+	"github.com/yetone/magpie/internal/proc"
 )
 
 func init() { gateway.MCPHub = theHub{} }
@@ -908,8 +909,13 @@ func dialStdio(s *Server, changed func()) (*streamConn, error) {
 		return nil, healthErr(*bad)
 	}
 	var exitErr error
-	exited := make(chan struct{})
-	go func() { exitErr = tree.Wait(); close(exited) }()
+	exited, read := make(chan struct{}), make(chan struct{})
+	before, grace := beforeServerRead, proc.OutputGrace
+	go func() {
+		exitErr = tree.Wait()
+		close(exited)
+		closeOut(stdout, read, grace)
+	}()
 	var wmu sync.Mutex
 	c := &streamConn{}
 	c.send = func(_ context.Context, b []byte) error {
@@ -933,11 +939,13 @@ func dialStdio(s *Server, changed func()) (*streamConn, error) {
 		stop()
 	}
 	go func() {
+		before(exited)
 		sc := bufio.NewScanner(stdout)
 		sc.Buffer(make([]byte, 64*1024), 16<<20)
 		for sc.Scan() {
 			c.read(sc.Bytes(), changed)
 		}
+		close(read)
 		// its output ended: it is ending, and says why once it has
 		select {
 		case <-exited:

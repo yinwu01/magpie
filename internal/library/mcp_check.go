@@ -544,8 +544,9 @@ func withPath(env []string, dir string) []string {
 // startServer starts the command s runs as the agents start it, on this
 // machine or in WSL distro: in the environment magpie has, with the
 // server's own variables over it, in home. Its stdin and stdout are the
-// MCP connection; what it writes to stderr is kept in errs; stop ends a
-// run in a distro (call it beside tree.Kill). The check starts it so, and
+// MCP connection, and its caller closes stdout once the server has been
+// waited for (closeOut); what it writes to stderr is kept in errs; stop
+// ends a run in a distro (call it beside tree.Kill). The check starts it so, and
 // so does the hub (mcp_hub.go), on this machine.
 func startServer(ctx context.Context, s *Server, distro, dir string) (tree *proc.Tree, stdin io.WriteCloser, stdout io.ReadCloser, errs *tail, stop func(), bad *ServerHealth) {
 	fail := func(h ServerHealth) (*proc.Tree, io.WriteCloser, io.ReadCloser, *tail, func(), *ServerHealth) {
@@ -619,15 +620,23 @@ func startServer(ctx context.Context, s *Server, distro, dir string) (tree *proc
 		stop()
 		return fail(failed("start", err.Error()))
 	}
-	out, err := cmd.StdoutPipe()
+	// its stdout is a pipe of magpie's own, not cmd.StdoutPipe's, which
+	// Wait closes as the server exits: a reply it wrote just before it
+	// exited was lost with the pipe (#5652). Its reader closes it
+	// (closeOut).
+	out, w, err := os.Pipe()
 	if err != nil {
+		in.Close()
 		stop()
 		return fail(failed("start", err.Error()))
 	}
+	cmd.Stdout = w
 	errs = &tail{}
 	cmd.Stderr = errs
 	tree, err = proc.StartTree(cmd)
+	w.Close() // the server has its own copy
 	if err != nil {
+		out.Close()
 		h := failed("start", err.Error())
 		if errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
 			h = failed("notfound", command)
@@ -637,6 +646,31 @@ func startServer(ctx context.Context, s *Server, distro, dir string) (tree *proc
 	}
 	return tree, in, out, errs, stop, nil
 }
+
+// closeOut closes out, a command server's stdout, after the server has
+// been waited for: once read, its reader done, or else after grace
+// (proc.OutputGrace, taken by the caller as it starts the server). What
+// the server started (a daemon in a session of its own, which the tree's
+// sweep misses) can hold a copy of it, and the reader would never see
+// its end; Wait closing it was what ended that reader before. A daemon
+// that holds its stderr too keeps Wait itself from returning (exec
+// copies stderr into a tail and waits for the copy), as it did before.
+func closeOut(out io.Closer, read <-chan struct{}, grace time.Duration) {
+	t := time.NewTimer(grace)
+	defer t.Stop()
+	select {
+	case <-read:
+	case <-t.C:
+	}
+	out.Close()
+}
+
+// beforeServerRead runs as a command server's stdout starts to be read,
+// given what closes once the server has been waited for: for a test to
+// read only after it has exited (TestServerReplyReadAfterExit). Taken
+// before the reader's goroutine starts, so a test can put it back as the
+// readers of servers it started still run.
+var beforeServerRead = func(waited <-chan struct{}) {}
 
 // checkStdioAt starts the command on this machine, or in WSL distro, and
 // asks it for its tools.
@@ -703,8 +737,13 @@ func checkStdioIn(ctx context.Context, s *Server, distro, dir string) ServerHeal
 		return *bad
 	}
 	var exitErr error
-	exited := make(chan struct{})
-	go func() { exitErr = tree.Wait(); close(exited) }()
+	exited, read := make(chan struct{}), make(chan struct{})
+	before, grace := beforeServerRead, proc.OutputGrace
+	go func() {
+		exitErr = tree.Wait()
+		close(exited)
+		closeOut(stdout, read, grace)
+	}()
 	// the server ends with the check, and whatever it started with it
 	defer func() {
 		stdin.Close()
@@ -719,6 +758,8 @@ func checkStdioIn(ctx context.Context, s *Server, distro, dir string) ServerHeal
 	msgs := make(chan *rpcMsg, 16)
 	go func() {
 		defer close(msgs)
+		defer close(read)
+		before(exited)
 		sc := bufio.NewScanner(stdout)
 		sc.Buffer(make([]byte, 64*1024), 16<<20)
 		for sc.Scan() {
