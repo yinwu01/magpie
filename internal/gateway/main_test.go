@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/yetone/magpie/internal/agentenv"
 	"github.com/yetone/magpie/internal/budget"
@@ -26,6 +27,9 @@ const standInsEnv = "MAGPIE_GATEWAY_TEST_STAND_INS"
 func TestMain(m *testing.M) {
 	serveRotation()
 	groupsServed = provider.ServeGroups()
+	// a middleware's hooks here answer at once, but a busy machine likely
+	// leaves this binary unscheduled past an onEvent's 50ms (#5955)
+	middleware.LimitsForTest(time.Minute)
 	serveMiddleware()
 	searchOn = gwtool.Serve(gwtool.WebSearch)
 	limitsOn = gwbudget.Limit(budget.Limiter{})
