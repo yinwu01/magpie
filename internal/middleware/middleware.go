@@ -41,6 +41,17 @@ var (
 
 var errTimeout = errors.New("took too long")
 
+// LimitsForTest gives each hook, strategy, onUsage and module load d
+// before it is stopped, and returns the func that puts the limits back.
+// A test binary that a busy machine leaves unscheduled can miss the
+// limits above with a hook that answers at once. The limits are the whole
+// binary's, so it isn't for parallel tests.
+func LimitsForTest(d time.Duration) (restore func()) {
+	r, e, l, s, u := requestLimit, eventLimit, loadLimit, strategyLimit, usageLimit
+	requestLimit, eventLimit, loadLimit, strategyLimit, usageLimit = d, d, d, d, d
+	return func() { requestLimit, eventLimit, loadLimit, strategyLimit, usageLimit = r, e, l, s, u }
+}
+
 // mw is one middleware, compiled.
 type mw struct {
 	spec, name string

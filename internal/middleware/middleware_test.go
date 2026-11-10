@@ -103,6 +103,43 @@ export default {
 	}
 }
 
+// A hook here that runs past production's limits, as one that answers
+// at once does on a machine busy enough to leave the test binary
+// unscheduled, isn't stopped: the tests give it room (#5965), and only
+// a test about a limit sets one.
+func TestHooksHaveRoomInTests(t *testing.T) {
+	e := file(t, `
+export function onRequest(body) {
+  const end = Date.now() + 300;
+  while (Date.now() < end) {}
+  body.done = true;
+  return body;
+}
+export function onEvent(ev) {
+  const end = Date.now() + 100;
+  while (Date.now() < end) {}
+  ev.done = true;
+  return ev;
+}`)
+	use(t, e)
+	r := Begin(info())
+	defer r.End()
+	if body, _ := r.Request([]byte(`{}`)); string(body) != `{"done":true}` {
+		t.Fatalf("onRequest was stopped: %s", body)
+	}
+	rec := httptest.NewRecorder()
+	w, done := r.Wrap(rec)
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Write([]byte("event: ping\ndata: {}\n\n"))
+	done()
+	if got := rec.Body.String(); got != "event: ping\ndata: {\"done\":true}\n\n" {
+		t.Fatalf("onEvent was stopped: %q", got)
+	}
+	if st := States()[e.Spec]; st.Failures != 0 {
+		t.Fatalf("state %+v", st)
+	}
+}
+
 func TestUndefinedKeepsBytes(t *testing.T) {
 	use(t, file(t, `export function onRequest(body) {}`))
 	in := `{"b": 1,   "a" : [1,2]}`

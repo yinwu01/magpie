@@ -170,7 +170,15 @@ func TestStrategyFailsOpen(t *testing.T) {
 	};`)
 	use(t, e)
 	serve(t)
+	was := strategyLimit
+	defer func() { strategyLimit = was }()
 	for _, name := range []string{"throws", "slow", "twice", "short", "fraction", "text", "nulls", "pending"} {
+		// Only the spin is cut short, at production's 20ms: the others
+		// fail on what they return, at any limit.
+		strategyLimit = was
+		if name == "slow" {
+			strategyLimit = 20 * time.Millisecond
+		}
 		start := time.Now()
 		if got := order(t, "x/"+name, 3); !slices.Equal(got, []int{0, 1, 2}) {
 			t.Fatal(name, got)
@@ -187,6 +195,7 @@ func TestStrategyFailsOpen(t *testing.T) {
 	// a busy runtime: onUsage or another request holds it
 	m := current().list[0]
 	m.pt.take(0)
+	strategyLimit = 20 * time.Millisecond // production's
 	start := time.Now()
 	if got := order(t, "x/twice", 3); !slices.Equal(got, []int{0, 1, 2}) {
 		t.Fatal("busy:", got)
