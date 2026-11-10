@@ -3218,7 +3218,10 @@ only with the SHA-256 the release's `SHA256SUMS` gives; the feed names R2
 only for a file it holds, and gives each file's github.com address beside it
 (`github`). When the site's copy fails, the app, `magpie update` and the
 installer go on to github.com's address, through your mirror when one is
-set (a mirror is only ever put before a github.com address). A file R2
+set (a mirror is only ever put before a github.com address). The app and
+`magpie update` do the same when a download that broke off is resumed and
+the site answers with other bytes than the rest asked for; with nowhere
+else to go, they ask it for the whole file again. A file R2
 doesn't hold (an older release) is redirected to github.com.
 
 When github.com's download address fails (it answered 504 for every release

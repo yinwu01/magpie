@@ -1191,6 +1191,7 @@ func download(ctx context.Context, a Asset, path string) error {
 		if toAPI {
 			left++
 		}
+		from := on.URL
 		if left > 0 && (busyErr(err) || try >= len(retryWaits)-left) {
 			if toGitHub {
 				toGitHub = false
@@ -1205,6 +1206,13 @@ func download(ctx context.Context, a Asset, path string) error {
 					err = fmt.Errorf("%w (GitHub's API route couldn't be found: %v)", err, aerr)
 				}
 			}
+		}
+		// a host that can't go on from where a try broke off, tried
+		// again, is asked for the whole file; what can't be cleared ends
+		// the download, which says why below
+		var ne *NetError
+		if on.URL == from && errors.As(err, &ne) && ne.whole && clearFile(path) != nil {
+			break
 		}
 		// the tries after a connection that broke go over HTTP/1.1: a
 		// proxy that cuts HTTP/2 streams part way cuts every try made
@@ -1263,10 +1271,18 @@ func hostOf(u string) string {
 type NetError struct {
 	File string
 	Err  error
+	// whole: the host answered a Range with other bytes than the rest
+	// asked for, so a try on it again asks for the whole file
+	whole bool
 }
 
 func (e *NetError) Error() string {
 	if s, ok := e.Err.(statusError); ok {
+		if e.whole {
+			// one answer, after which the next try went elsewhere or
+			// asked for the whole file
+			return fmt.Sprintf("download %s: %s", e.File, string(s))
+		}
 		return fmt.Sprintf("download %s: %s, on every try", e.File, string(s))
 	}
 	cause := e.Err
@@ -1389,6 +1405,13 @@ func fetch(ctx context.Context, a Asset, path string) error {
 		flag = os.O_WRONLY | os.O_APPEND
 	case res.StatusCode == http.StatusOK:
 		have = 0 // the whole file again
+	case res.StatusCode == http.StatusPartialContent && have > 0:
+		// not the rest asked for: another range, or one that can't be
+		// read (usemagpie.ai's files answered "bytes NaN-NaN/<size>" to
+		// every Range, #5984). Taken as a busy answer, with what came
+		// kept: the download goes on from the next route, or asks this
+		// host for the whole file
+		return fail(&NetError{File: name, Err: statusError(fmt.Sprintf("%s with Content-Range %q for the bytes from %d", res.Status, res.Header.Get("Content-Range"), have)), whole: true})
 	case busyStatus(res.StatusCode):
 		// the host is busy or its edge timed out (GitHub's asset host
 		// answered 504 Gateway Timeout, 0.1.3316): tried again, as a
