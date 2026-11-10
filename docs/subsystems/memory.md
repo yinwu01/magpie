@@ -21,7 +21,7 @@ A memory is one short text (`MaxText` runes) with:
 
 | Field | Values | Meaning |
 | --- | --- | --- |
-| `scope` | `global`, `project:<key>`, `agent:<id>` | where it holds. A project is the git repository, keyed by its remote (`ProjectOf`, `RemoteKey`), so every clone and worktree shares it. An agent id has no `@wsl:…` suffix. |
+| `scope` | `global`, `project:<key>`, `agent:<id>` | where it holds. A project is the git repository, as git finds it (`provider.GitAt`: an empty `.git` is passed over, `TestProjectOfPassesAnEmptyGit`), keyed by its remote (`ProjectOf`, `RemoteKey`), so every clone and worktree shares it. An agent id has no `@wsl:…` suffix. |
 | `kind` | profile, preference, rule, reference, fact, procedure, episode | how long it stays true and where it goes in the digest. A field of its own, not a tag. |
 | `tags` | free words (`CleanTags`) | the user's own grouping. |
 | `origin` | user, agent, imported, inferred | who wrote it. An agent's save never changes text the user wrote (`TestUsersMemoryNotChangedByAnAgentsSave`). |
