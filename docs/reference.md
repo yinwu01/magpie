@@ -2860,10 +2860,17 @@ read-only key is refused 403 `gateway_key_read_only` and a held key 403
 `gateway_key_held`.
 
 An app of your own can read the Usage page's numbers too.
-`GET /v1/magpie/usage?period=<today|week|month|all>` is the page's summary,
+`GET /v1/magpie/usage?period=<today|7d|30d|all>` is the page's summary,
 the same JSON as the window's `/api/usage` (`path` is left out for another
 machine), with every session in `sessions` where the window's lists the
-top 100 by tokens; `sessionCount` is how many there are. `GET /v1/magpie/usage/requests` is its requests a page at a time
+top 100 by tokens; `sessionCount` is how many there are. `period` also
+takes days picked as `2026-10-01..2026-10-07` (each end a date, its whole
+day included, or a minute as `2026-10-01T09:00`, on the answering
+machine's clock; the range must end after it begins) and a window ending
+now as `last:24h` (a Go duration: `90m`, `168h`). A period left out, or
+one it doesn't know (`week` and `month` included), is answered as `30d`
+for now; the answer's `period` says which it is.
+`GET /v1/magpie/usage/requests` is its requests a page at a time
 (`offset`, `limit` up to 500), with the same filters as the Requests log:
 `period`, `day`, `agent`, `provider`, `model`, `account`, `callerKey`,
 `purpose`, `failed`, `retried`, `q`, `via`, `computer`. `callerKey=none`
