@@ -128,8 +128,11 @@ type held struct {
 // A reservation stays in the window where the request began, even if it
 // finishes after the next one has started.
 type window struct {
-	key   string
-	start int64  // the window's start as Unix seconds
+	key string
+	// the window's start to the nanosecond: a limit set or reset again
+	// in the same second starts a window of its own, which a request in
+	// flight in the one before doesn't hold (#6082)
+	start int64
 	scope string // the limit's models (access.Limit.Scope), "" for the whole key
 }
 
@@ -330,7 +333,7 @@ func AllOf(keys []access.Key, now time.Time) [][]Status {
 		seen := map[window]*want{}
 		for _, l := range k.Limits() {
 			start, _ := l.Window(now)
-			w := window{slot(k.ID), start.Unix(), l.Scope()}
+			w := window{slot(k.ID), start.UnixNano(), l.Scope()}
 			x := seen[w]
 			if x == nil {
 				x = &want{w: w}
@@ -339,9 +342,8 @@ func AllOf(keys []access.Key, now time.Time) [][]Status {
 					x.prefix.models = scopeModels(l)
 				}
 				kept.Lock()
-				// window keys a start by its second: what was kept is
-				// another limit's when that one started in the same
-				// second (a 10-day limit made a 5-hour one at once)
+				// what was kept is of this limit's own start only (a
+				// 10-day limit made a 5-hour one at once)
 				if e, ok := kept.of[w]; ok && e.prefix.start.Equal(start) {
 					x.prefix, x.cur = e.prefix, e.cur
 				}
@@ -586,7 +588,7 @@ func reserve(who access.Identity, body int64, model string, now time.Time) (rele
 	if len(ls) == 0 {
 		return func() {}, nil
 	}
-	heldAt := func(i int) *held { return state.held[window{slot(who.KeyID), starts[i].Unix(), ls[i].Scope()}] }
+	heldAt := func(i int) *held { return state.held[window{slot(who.KeyID), starts[i].UnixNano(), ls[i].Scope()}] }
 	// every limit is asked: of those with nothing left, the one that
 	// resets last is the one the client is told, as it is refused until then
 	for i, l := range ls {
@@ -615,7 +617,7 @@ func reserve(who access.Identity, body int64, model string, now time.Time) (rele
 	}
 	var holds []hold
 	for i, l := range ls {
-		k := window{slot(who.KeyID), starts[i].Unix(), l.Scope()}
+		k := window{slot(who.KeyID), starts[i].UnixNano(), l.Scope()}
 		j := slices.IndexFunc(holds, func(x hold) bool { return x.k == k })
 		if j < 0 {
 			s := ss[i]
@@ -722,7 +724,7 @@ func spentOf(who access.Identity, now time.Time) []access.SpentScope {
 	ls, starts, resets, ss := windowsOf(who, now, (*access.Limit).Scoped)
 	var out []access.SpentScope
 	for i, l := range ls {
-		s, h := ss[i], state.held[window{slot(who.KeyID), starts[i].Unix(), l.Scope()}]
+		s, h := ss[i], state.held[window{slot(who.KeyID), starts[i].UnixNano(), l.Scope()}]
 		var ht int64
 		var hc float64
 		if h != nil {
